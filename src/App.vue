@@ -152,7 +152,7 @@
           </div>
           <div class="sidebar-section">
             <div class="sidebar-title">{{$t('m.displayMode')}}</div>
-            <el-radio-group v-model="viewMode" @change="toggleViewMode">
+            <el-radio-group v-model="viewMode">
               <el-radio-button value="card">{{$t('m.cardMode')}}</el-radio-button>
               <el-radio-button value="compact">{{$t('m.compactMode')}}</el-radio-button>
             </el-radio-group>

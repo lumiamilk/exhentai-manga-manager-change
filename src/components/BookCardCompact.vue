@@ -1,76 +1,81 @@
 <template>
-  <el-popover
-    :visible="showPreview"
-    :width="380"
-    placement="right"
-    :show-arrow="false"
-    :offset="8"
-    popper-class="compact-preview-popover"
-  >
-    <template #reference>
-      <div 
-        class="book-card-compact"
-        @click="$emit('openBookDetail')"
-        @contextmenu="$emit('onBookContextMenu', $event, book)"
-        @mouseenter="handleMouseEnter"
-        @mouseleave="handleMouseLeave"
-      >
-        <div class="compact-main">
-          <!-- 状态指示器替代缩略图 -->
-          <div class="compact-status-indicator" :class="statusClass">
-            <span class="status-icon">{{ book.pageCount || '?' }}P</span>
-          </div>
-          
-          <div class="compact-info">
-            <p class="compact-title" :title="getDisplayTitle(book)">{{getDisplayTitle(book)}}</p>
-            <div class="compact-meta">
-              <el-tag size="small" :type="isChineseTranslatedManga(book) ? 'danger' : 'info'">{{ book.pageCount }}P</el-tag>
-              <el-tag size="small" :type="book.status === 'non-tag' ? 'info' : book.status === 'tagged' ? 'success' : 'warning'">{{book.status}}</el-tag>
-              <el-rate v-model="bookRating" size="small" allow-half @change="saveBook(Object.assign({}, book, {rating: bookRating}))" @click.stop />
-              <span class="compact-artist" v-if="artistList">{{ artistList }}</span>
-            </div>
-          </div>
-          
-          <div class="compact-actions">
-            <el-button type="success" size="small" plain @click.stop="$emit('openLocalBook')">{{$t('m.re')}}</el-button>
-            <el-button type="primary" size="small" plain @click.stop="$emit('viewManga')">{{$t('m.ad')}}</el-button>
-            <el-icon
-              :size="20"
-              :color="book.mark ? '#E6A23C' : '#666666'"
-              class="compact-mark" @click.stop="switchMark(book)"
-            ><BookmarkTwotone /></el-icon>
-          </div>
+  <div class="book-card-compact-wrapper">
+    <!-- 虚拟触发的 popover，跟随鼠标位置 -->
+    <el-popover
+      :visible="showPreview"
+      :width="520"
+      placement="right-start"
+      :show-arrow="false"
+      popper-class="card-preview-popover"
+      :teleported="true"
+      :virtual-ref="virtualRef"
+      virtual-triggering
+    >
+      <div class="preview-content" v-if="showPreview">
+        <div class="preview-loading" v-if="loadingPreview">
+          <el-icon class="is-loading" :size="24"><SyncOutlined /></el-icon>
+          <span>Loading preview...</span>
+        </div>
+        <div class="preview-images" v-else-if="previewImages.length > 0">
+          <div 
+            v-for="(img, index) in previewImages" 
+            :key="index"
+            class="preview-image"
+            :style="{ backgroundImage: `url('${img}')` }"
+          ></div>
+        </div>
+        <div class="preview-cover" v-else-if="book.coverPath">
+          <div class="cover-image" :style="{ backgroundImage: `url('${getCoverUrl(book.coverPath)}')` }"></div>
+        </div>
+        <div class="preview-placeholder" v-else>
+          <el-icon :size="32"><ImageOutlined /></el-icon>
+          <span>No preview available</span>
         </div>
       </div>
-    </template>
+    </el-popover>
     
-    <!-- 悬浮预览内容 -->
-    <div class="preview-content" v-if="showPreview">
-      <div class="preview-loading" v-if="loadingPreview">
-        <el-icon class="is-loading" :size="24"><SyncOutlined /></el-icon>
-        <span>Loading preview...</span>
-      </div>
-      <div class="preview-images" v-else-if="previewImages.length > 0">
-        <div 
-          v-for="(img, index) in previewImages" 
-          :key="index"
-          class="preview-image"
-          :style="{ backgroundImage: `url('${img}')` }"
-        ></div>
-      </div>
-      <div class="preview-cover" v-else-if="book.coverPath">
-        <div class="cover-image" :style="{ backgroundImage: `url('${getCoverUrl(book.coverPath)}')` }"></div>
-      </div>
-      <div class="preview-placeholder" v-else>
-        <el-icon :size="32"><ImageOutlined /></el-icon>
-        <span>No preview available</span>
+    <!-- 主内容区域 -->
+    <div 
+      class="book-card-compact"
+      ref="cardRef"
+      @click="$emit('openBookDetail')"
+      @contextmenu="$emit('onBookContextMenu', $event, book)"
+      @mouseenter="handleMouseEnter"
+      @mouseleave="handleMouseLeave"
+      @mousemove="handleMouseMove"
+    >
+      <div class="compact-main">
+        <!-- 状态指示器替代缩略图 -->
+        <div class="compact-status-indicator" :class="statusClass">
+          <span class="status-icon">{{ book.pageCount || '?' }}P</span>
+        </div>
+        
+        <div class="compact-info">
+          <p class="compact-title" :title="getDisplayTitle(book)">{{getDisplayTitle(book)}}</p>
+          <div class="compact-meta">
+            <el-tag size="small" :type="isChineseTranslatedManga(book) ? 'danger' : 'info'">{{ book.pageCount }}P</el-tag>
+            <el-tag size="small" :type="book.status === 'non-tag' ? 'info' : book.status === 'tagged' ? 'success' : 'warning'">{{book.status}}</el-tag>
+            <el-rate v-model="bookRating" size="small" allow-half @change="saveBook(Object.assign({}, book, {rating: bookRating}))" @click.stop />
+            <span class="compact-artist" v-if="artistList">{{ artistList }}</span>
+          </div>
+        </div>
+        
+        <div class="compact-actions">
+          <el-button type="success" size="small" plain @click.stop="$emit('openLocalBook')">{{$t('m.re')}}</el-button>
+          <el-button type="primary" size="small" plain @click.stop="$emit('viewManga')">{{$t('m.ad')}}</el-button>
+          <el-icon
+            :size="20"
+            :color="book.mark ? '#E6A23C' : '#666666'"
+            class="compact-mark" @click.stop="switchMark(book)"
+          ><BookmarkTwotone /></el-icon>
+        </div>
       </div>
     </div>
-  </el-popover>
+  </div>
 </template>
 
 <script setup>
-import { ref, watchEffect, computed, onUnmounted } from 'vue'
+import { ref, watchEffect, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookmarkTwotone, ImageOutlined, SyncOutlined } from '@vicons/material'
 import { storeToRefs } from 'pinia'
@@ -88,7 +93,7 @@ const getCoverUrl = (coverPath) => {
   return 'file://' + coverPath.replace(/\\/g, '/')
 }
 
-const ipcRenderer = window.ipcRenderer
+const ipcRenderer = window.ipcRenderer || { invoke: () => Promise.resolve() }
 
 const emit = defineEmits([
   'openBookDetail',
@@ -122,18 +127,41 @@ const statusClass = computed(() => {
   return 'status-failed'
 })
 
-// 预览功能 - 仅在悬浮 300ms 后加载
+// 预览功能 - 虚拟触发
+const cardRef = ref(null)
 const showPreview = ref(false)
 const previewImages = ref([])
 const loadingPreview = ref(false)
 let previewTimeout = null
 let loadedBooks = new Set()
 
+// 虚拟触发元素 - 模拟一个跟随鼠标的虚拟元素
+const virtualRef = ref({
+  getBoundingClientRect: () => ({
+    width: 0,
+    height: 0,
+    top: mouseY.value,
+    right: mouseX.value,
+    bottom: mouseY.value,
+    left: mouseX.value,
+    x: mouseX.value,
+    y: mouseY.value
+  })
+})
+
+const mouseX = ref(0)
+const mouseY = ref(0)
+
+const handleMouseMove = (e) => {
+  mouseX.value = e.clientX
+  mouseY.value = e.clientY
+}
+
 const handleMouseEnter = () => {
   previewTimeout = setTimeout(() => {
     showPreview.value = true
     loadPreviewImages()
-  }, 300) // 300ms 延迟
+  }, 500)
 }
 
 const handleMouseLeave = () => {
@@ -145,12 +173,6 @@ const handleMouseLeave = () => {
 }
 
 const loadPreviewImages = async () => {
-  // 优先使用封面
-  if (props.book.coverPath) {
-    previewImages.value = []
-    return
-  }
-  
   if (loadedBooks.has(props.book.id)) {
     return
   }
@@ -158,13 +180,13 @@ const loadPreviewImages = async () => {
   loadingPreview.value = true
   
   try {
-    // 先生成封面
-    const bookData = JSON.parse(JSON.stringify(props.book))
-    const coverInfo = await ipcRenderer.invoke('generate-cover-priority', bookData)
-    if (coverInfo && coverInfo.coverPath) {
-      props.book.coverPath = coverInfo.coverPath
-      props.book.hash = coverInfo.hash
-      props.book.pageCount = coverInfo.pageCount
+    const result = await ipcRenderer.invoke('get-preview-images', {
+      filepath: props.book.filepath,
+      type: props.book.type,
+      count: 3
+    })
+    if (result && result.images && result.images.length > 0) {
+      previewImages.value = result.images.map(p => 'file://' + p.replace(/\\/g, '/'))
     }
     loadedBooks.add(props.book.id)
   } catch (e) {
@@ -182,6 +204,8 @@ onUnmounted(() => {
 </script>
 
 <style lang="stylus">
+.book-card-compact-wrapper
+  width: 100%
 .book-card-compact
   display: block
   width: 100%
@@ -270,49 +294,40 @@ onUnmounted(() => {
       cursor: pointer
       margin-left: 4px
 
-// 预览 Popover 样式
-.compact-preview-popover
-  padding: 8px !important
-  
-  .preview-content
-    display: flex
-    flex-direction: column
-    align-items: center
-    
-    .preview-loading
-      display: flex
-      flex-direction: column
-      align-items: center
-      gap: 8px
-      padding: 20px
-      color: var(--el-text-color-secondary)
-    
-    .preview-images
-      display: flex
-      gap: 4px
-      
-      .preview-image
-        width: 120px
-        height: 170px
-        background-size: cover
-        background-position: center
-        background-repeat: no-repeat
-        border-radius: 4px
-    
-    .preview-cover
-      .cover-image
-        width: 200px
-        height: 283px
-        background-size: cover
-        background-position: center
-        background-repeat: no-repeat
-        border-radius: 4px
-    
-    .preview-placeholder
-      display: flex
-      flex-direction: column
-      align-items: center
-      gap: 8px
-      padding: 20px
-      color: var(--el-text-color-secondary)
+// 预览样式
+.preview-content
+  display: flex
+  flex-direction: column
+  gap: 8px
+
+.preview-loading, .preview-placeholder
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  gap: 8px
+  padding: 20px
+  color: var(--el-text-color-secondary)
+
+.preview-images
+  display: flex
+  gap: 8px
+
+.preview-image
+  width: 150px
+  height: 212px
+  background-size: cover
+  background-position: center
+  background-repeat: no-repeat
+  border-radius: 4px
+  border: 1px solid var(--el-border-color-light)
+
+.preview-cover
+  .cover-image
+    width: 200px
+    height: 283px
+    background-size: cover
+    background-position: center
+    background-repeat: no-repeat
+    border-radius: 4px
 </style>

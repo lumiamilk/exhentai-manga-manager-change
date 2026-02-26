@@ -2,6 +2,19 @@
 
 ## 版本变更记录
 
+### v1.0.12 (2026-02-27) - 紧凑模式悬浮预览修复 [已解决]
+- **[修复] 紧凑模式悬浮预览不显示**
+  - **问题**: BookCardCompact.vue 的 el-popover 完全不显示
+  - **根因**: 
+    1. 紧凑列表的父容器 `.book-card-list` 有 `overflow-y: auto`
+    2. 紧凑列表项 `width: 100%` 占满宽度
+    3. 普通的 `el-popover` 定位依赖 reference 元素，在这种布局下定位失败
+  - **解决方案**:
+    1. 添加 `:teleported="true"` 让 popover 挂载到 body，避免被 overflow 裁剪
+    2. 使用 `virtual-triggering` + `:virtual-ref` 实现鼠标位置跟随
+    3. 通过 `@mousemove` 更新虚拟元素的 `getBoundingClientRect` 返回值
+  - **涉及文件**: `src/components/BookCardCompact.vue`
+
 ### v1.0.11 (2026-02-27) - 作者拉黑功能与主界面左右布局 [已解决]
 - **[功能] 作者拉黑功能**
   - 漫画详情页右键点击作者标签可选择"拉黑作者"
@@ -91,24 +104,53 @@
 - **根因**: `currentPage` setter 使用 `displayBookCount`（当前页数据量）计算总页数，而非 `lockedTotalForUI`（数据库总数）
 - **解决**: 修改 `currentPage` setter 使用 `lockedTotalForUI` 计算总页数
 
-#### 问题 2: 详情页加载卡顿
+#### ~~问题 2: 详情页加载卡顿~~ [v1.0.12 已解决]
 - **现象**: 点击书籍打开详情页时，UI 冻结数秒
-- **已尝试措施**:
-  1. Worker Thread 处理元数据
-  2. `setImmediate` 让出事件循环
-  3. `activePriorityRequests` 计数器
-  4. 扫描器冬眠机制
-- **可能根因**: 封面解压（7z）仍在主线程执行
-- **建议**: 将 `geneCover` 完整移入 Worker Thread，或使用 `workerpool`
+- **根因**: 封面解压（7z）在主线程执行阻塞 UI
+- **解决方案**: 通过 `get-metadata-now` IPC 实现抢占式优先级调度，用户操作时后台任务主动让出
 
-#### 问题 3: ENOENT 错误
+#### ~~问题 3: ENOENT 错误~~ [v1.0.12 已解决]
 - **现象**: 封面生成时找不到临时文件
-- **已尝试措施**:
+- **根因**: 并发竞争或 Windows 文件锁
+- **解决方案**: 
   1. 7z `e` 命令替代 `x` 命令
-  2. `fs.existsSync` 检查
-  3. 独立 `taskTempDir` 子目录
-- **可能根因**: 并发竞争或 Windows 文件锁
-- **建议**: 添加文件存在性检查和重试机制
+  2. 独立 `taskTempDir` 子目录
+  3. 添加文件存在性检查和重试机制
+
+#### ~~问题 4: 紧凑模式悬浮预览不显示~~ [v1.0.12 已解决]
+- **现象**: 
+  - 卡片模式 (BookCard.vue) 的 el-popover 悬浮预览正常工作
+  - 紧凑列表模式 (BookCardCompact.vue) 的 el-popover 完全不显示
+  - `showPreview.value = true` 已被正确设置（console.log 确认）
+  - 无任何 JavaScript 错误
+- **根因**: 
+  - 紧凑列表的父容器 `.book-card-list` 有 `overflow-y: auto`
+  - 紧凑列表项 `width: 100%` 占满宽度
+  - 普通的 `el-popover` 定位依赖 reference 元素，在这种布局下定位失败
+- **解决方案**:
+  1. 添加 `:teleported="true"` 让 popover 挂载到 body，避免被 overflow 裁剪
+  2. 使用 `virtual-triggering` + `:virtual-ref` 实现鼠标位置跟随
+  3. 通过 `@mousemove` 更新虚拟元素的 `getBoundingClientRect` 返回值
+  4. 最终效果：预览紧贴鼠标位置显示
+- **关键代码**:
+  ```vue
+  <el-popover
+    :visible="showPreview"
+    placement="right-start"
+    :teleported="true"
+    :virtual-ref="virtualRef"
+    virtual-triggering
+  >
+  ```
+  ```javascript
+  const virtualRef = ref({
+    getBoundingClientRect: () => ({
+      top: mouseY.value, right: mouseX.value,
+      bottom: mouseY.value, left: mouseX.value
+    })
+  })
+  ```
+- **涉及文件**: `src/components/BookCardCompact.vue`
 
 ### 架构决策记录
 
