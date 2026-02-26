@@ -2,7 +2,7 @@
   <el-config-provider :locale="localeFile">
     <div id="progressbar" :style="{ width: progress + '%' }"></div>
     <el-button class="fullscreen-button" circle :icon="FullScreen" size="large" @click="switchFullscreen"></el-button>
-    <el-row :gutter="20" class="book-search-bar">
+    <el-row :gutter="20" class="book-search-bar" style="display: none;">
       <el-col :span="1" :offset="2">
         <el-button type="primary" :icon="TreeViewAlt" plain @click="$refs.FolderTreeRef.openFolderTree()" :title="$t('m.folderTree')"></el-button>
       </el-col>
@@ -109,11 +109,86 @@
     </el-row>
     <RandomTags
       ref="randomTagsRef"
-      v-if="!editTagView && !editCollectionView && !setting.disableRandomTag"
+      v-if="false && !editTagView && !editCollectionView && !setting.disableRandomTag"
       @search="handleSearchString"
     />
     <el-row :gutter="20" class="book-card-area">
-      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="book-card-list" :class="{'compact-mode': viewMode === 'compact'}" :style="{height: setting.disableRandomTag ? 'calc(100vh - 96px)' : 'calc(100vh - 134px)'}">
+      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="main-content-wrapper">
+        <div class="sidebar-panel">
+          <div class="sidebar-section">
+            <div class="sidebar-title">{{$t('m.search')}}</div>
+            <el-input v-model="searchString" @keyup.enter="searchBook" clearable :placeholder="$t('m.search')" />
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-title">{{$t('m.sort_filter')}}</div>
+            <el-select @change="handleSortChange" clearable v-model="sortValue" style="width: 100%">
+              <el-option-group :label="$t('m.filter')">
+                <el-option :label="$t('m.all')" value=""></el-option>
+                <el-option :label="$t('m.bookmarkOnly')" value="mark"></el-option>
+                <el-option :label="$t('m.collectionOnly')" value="collection"></el-option>
+                <el-option :label="$t('m.hiddenOnly')" value="hidden"></el-option>
+                <el-option :label="$t('m.recentReadOnly')" value="recentRead"></el-option>
+              </el-option-group>
+              <el-option-group :label="$t('m.sort')">
+                <el-option :label="$t('m.shuffle')" value="shuffle"></el-option>
+                <el-option :label="$t('m.addTimeAscend')" value="addAscend"></el-option>
+                <el-option :label="$t('m.addTimeDescend')" value="addDescend"></el-option>
+                <el-option :label="$t('m.mtimeAscend')" value="mtimeAscend"></el-option>
+                <el-option :label="$t('m.mtimeDescend')" value="mtimeDescend"></el-option>
+                <el-option :label="$t('m.postTimeAscend')" value="postAscend"></el-option>
+                <el-option :label="$t('m.postTimeDescend')" value="postDescend"></el-option>
+                <el-option :label="$t('m.ratingAscend')" value="scoreAscend"></el-option>
+                <el-option :label="$t('m.ratingDescend')" value="scoreDescend"></el-option>
+                <el-option :label="$t('m.readCountAscend')" value="readCountAscend"></el-option>
+                <el-option :label="$t('m.readCountDescend')" value="readCountDescend"></el-option>
+                <el-option :label="$t('m.artistAscend')" value="artistAscend"></el-option>
+                <el-option :label="$t('m.artistDescend')" value="artistDescend"></el-option>
+                <el-option :label="$t('m.titleAscend')" value="titleAscend"></el-option>
+                <el-option :label="$t('m.titleDescend')" value="titleDescend"></el-option>
+                <el-option :label="$t('m.pageAscend')" value="pageAscend"></el-option>
+                <el-option :label="$t('m.pageDescend')" value="pageDescend"></el-option>
+              </el-option-group>
+            </el-select>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-title">{{$t('m.displayMode')}}</div>
+            <el-radio-group v-model="viewMode" @change="toggleViewMode">
+              <el-radio-button value="card">{{$t('m.cardMode')}}</el-radio-button>
+              <el-radio-button value="compact">{{$t('m.compactMode')}}</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="sidebar-section sidebar-buttons">
+            <el-button type="primary" plain @click="loadBookList(true)" :loading="buttonLoadBookListLoading">
+              {{$t('m.manualScan')}}
+            </el-button>
+            <el-button type="primary" plain @click="getBookListMetadata()" :loading="buttonGetMetadatasLoading">
+              {{$t('m.batchGetMetadata')}}
+            </el-button>
+            <el-button plain @click="$refs.TagGraphRef.displayTagGraph()">
+              {{$t('m.tagAnalysis')}}
+            </el-button>
+            <el-button plain @click="shuffleBook">
+              {{$t('m.shuffle')}}
+            </el-button>
+          </div>
+          <div class="sidebar-section">
+            <div class="sidebar-title">{{$t('m.manage')}}</div>
+            <div class="sidebar-buttons">
+              <el-button plain @click="$refs.EditViewRef.enterEditCollectionView()">
+                {{$t('m.manageCollection')}}
+              </el-button>
+              <el-button plain @click="$refs.EditViewRef.enterEditTagView()">
+                {{$t('m.manageTag')}}
+              </el-button>
+            </div>
+          </div>
+          <div class="sidebar-section">
+            <el-button type="primary" plain @click="$refs.SettingRef.dialogVisibleSetting = true">
+              {{$t('m.setting')}}
+            </el-button>
+          </div>
+        </div>
+        <div class="book-card-list" :class="{'compact-mode': viewMode === 'compact'}">
         <div
           v-for="(book, index) in visibleChunkDisplayBookList"
           :key="book.id"
@@ -150,6 +225,7 @@
               @open-collection="openCollection(book)"
             />
           </transition>
+        </div>
         </div>
       </el-col>
       <EditView
@@ -1543,15 +1619,52 @@ body
       text-align: center
 
 .book-card-area
-  overflow-x: auto
-  justify-content: center
+  overflow-x: hidden
   margin-top: 8px
+  height: calc(100vh - 96px)
+  .main-content-wrapper
+    display: flex
+    height: 100%
+    gap: 16px
+  .sidebar-panel
+    width: 200px
+    flex-shrink: 0
+    display: flex
+    flex-direction: column
+    gap: 12px
+    padding: 12px
+    background: var(--el-fill-color-light)
+    border-radius: 8px
+    overflow-y: auto
+    .el-input, .el-select, .el-radio-group
+      width: 100%
+    .el-button
+      width: 100%
+      margin-left: 0 !important
+  .sidebar-section
+    display: flex
+    flex-direction: column
+    gap: 8px
+    align-items: stretch
+  .sidebar-title
+    font-weight: 500
+    font-size: 13px
+    color: var(--el-text-color-secondary)
+    padding-bottom: 4px
+    border-bottom: 1px solid var(--el-border-color-light)
+  .sidebar-buttons
+    display: flex
+    flex-direction: column
+    gap: 6px
+    align-items: stretch
   .book-card-list
-    height: calc(100vh - 96px)
+    flex: 1
+    height: 100%
     display: flex
     flex-wrap: wrap
     justify-content: center
     align-content: flex-start
+    overflow-y: auto
     &.compact-mode
       display: block
       height: calc(100vh - 96px)

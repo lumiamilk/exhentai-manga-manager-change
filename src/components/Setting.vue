@@ -1,15 +1,42 @@
 <template>
   <el-dialog v-model="dialogVisibleSetting"
-    width="55em"
+    width="65em"
     :modal="false"
     append-to-body
     top="60px"
     class="setting-dialog"
   >
     <template #header><p class="setting-title">{{$t('m.setting')}}</p></template>
-    <el-tabs v-model="activeSettingPanel" class="setting-tabs">
-      <el-tab-pane :label="$t('m.general')" name="general">
-        <el-row :gutter="8">
+    <div class="setting-layout">
+      <div class="setting-sidebar">
+        <el-menu
+          :default-active="activeSettingPanel"
+          @select="(key) => activeSettingPanel = key"
+          class="setting-menu"
+        >
+          <el-menu-item index="general">
+            <span>{{$t('m.general')}}</span>
+          </el-menu-item>
+          <el-menu-item index="internalViewer">
+            <span>{{$t('m.internalViewer')}}</span>
+          </el-menu-item>
+          <el-menu-item index="collectTag">
+            <span>{{$t('m.collectTag')}}</span>
+          </el-menu-item>
+          <el-menu-item index="advanced">
+            <span>{{$t('m.advanced')}}</span>
+          </el-menu-item>
+          <el-menu-item index="accelerator">
+            <span>{{$t('m.accelerator')}}</span>
+          </el-menu-item>
+          <el-menu-item index="about">
+            <span>{{$t('m.about')}}</span>
+          </el-menu-item>
+        </el-menu>
+      </div>
+      <div class="setting-content">
+        <div v-show="activeSettingPanel === 'general'" class="setting-panel">
+          <el-row :gutter="8">
           <el-col :span="24">
             <div class="setting-line library-management">
               <div class="library-header">
@@ -122,9 +149,9 @@
             </div>
           </el-col>
         </el-row>
-      </el-tab-pane>
-      <el-tab-pane :label="$t('m.internalViewer')" name="internalViewer">
-        <el-row :gutter="8">
+        </div>
+        <div v-show="activeSettingPanel === 'internalViewer'" class="setting-panel">
+          <el-row :gutter="8">
           <el-col :span="24">
             <div class="setting-line">
               <NameFormItem class="label-input" prependWidth="110px">
@@ -188,9 +215,9 @@
             />
           </el-col>
         </el-row>
-      </el-tab-pane>
-      <el-tab-pane :label="$t('m.collectTag')" name="collectTag">
-        <el-row :gutter="8">
+        </div>
+        <div v-show="activeSettingPanel === 'collectTag'" class="setting-panel">
+          <el-row :gutter="8">
           <el-col :span="24" class="setting-line collect-tag">
             <draggable
               v-model="setting.collectTag"
@@ -231,9 +258,9 @@
             />
           </el-col>
         </el-row>
-      </el-tab-pane>
-      <el-tab-pane :label="$t('m.advanced')" name="advanced">
-        <el-row :gutter="8">
+        </div>
+        <div v-show="activeSettingPanel === 'advanced'" class="setting-panel">
+          <el-row :gutter="8">
           <el-col :span="24">
             <div class="setting-line">
               <NameFormItem class="label-input" prependWidth="110px">
@@ -510,9 +537,9 @@
             </div>
           </el-col>
         </el-row>
-      </el-tab-pane>
-      <el-tab-pane :label="$t('m.accelerator')" name="accelerator">
-        <el-descriptions
+        </div>
+        <div v-show="activeSettingPanel === 'accelerator'" class="setting-panel">
+          <el-descriptions
           :column="2" size="small" style="margin-top: 16px;"
           v-for="group in acceleratorInfo" :key="group.group"
           :title="$t(`ac.${group.group}`)"
@@ -522,9 +549,9 @@
             <el-tag>{{ value }}</el-tag>
           </el-descriptions-item>
         </el-descriptions>
-      </el-tab-pane>
-      <el-tab-pane :label="$t('m.about')" name="about">
-        <el-descriptions :column="1">
+        </div>
+        <div v-show="activeSettingPanel === 'about'" class="setting-panel">
+          <el-descriptions :column="1">
           <el-descriptions-item :label="$t('m.appName')+':'">exhentai-manga-manager</el-descriptions-item>
           <el-descriptions-item :label="$t('m.version')+':'">
             <a href="#" @click="openLink('https://github.com/SchneeHertz/exhentai-manga-manager/releases')">{{version}}</a>
@@ -549,8 +576,9 @@
             </div>
           </el-col>
         </el-row>
-      </el-tab-pane>
-    </el-tabs>
+        </div>
+      </div>
+    </div>
   </el-dialog>
 
   <el-dialog v-model="dialogVisibleLibrary" :title="libraryDialogTitle" width="500px">
@@ -1066,9 +1094,27 @@ defineExpose({
   right: 40px
   top: 10px
 
-.setting-tabs
-  .el-tabs__content
-    max-height: 70vh
-    overflow-y: auto
-    padding-right: 10px
+.setting-layout
+  display: flex
+  min-height: 60vh
+  max-height: 75vh
+.setting-sidebar
+  width: 140px
+  flex-shrink: 0
+  border-right: 1px solid var(--el-border-color)
+  margin-right: 16px
+.setting-menu
+  border-right: none
+  background: transparent
+.setting-menu .el-menu-item
+  height: 40px
+  line-height: 40px
+.setting-menu .el-menu-item.is-active
+  background-color: var(--el-color-primary-light-9)
+.setting-content
+  flex: 1
+  overflow-y: auto
+  padding-right: 10px
+.setting-panel
+  min-height: 100%
 </style>
