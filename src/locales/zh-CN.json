@@ -203,7 +203,8 @@
     "blockedArtists": "黑名单作者",
     "blockedArtistsInfo": "以下作者已被拉黑，其作品将不会显示在漫画列表中",
     "noBlockedArtists": "暂无拉黑的作者",
-    "unblock": "取消拉黑"
+    "unblock": "取消拉黑",
+    "manage": "管理"
   },
   "c": {
     "selectCollectionList": "选择collectionList.json",
