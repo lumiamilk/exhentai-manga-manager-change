@@ -216,6 +216,8 @@ import { storeToRefs } from 'pinia'
 import { useAppStore } from '../pinia.js'
 import  { insertLocalReadRecord } from '../utils.js'
 
+const ipcRenderer = window.ipcRenderer || { on: () => {}, invoke: () => Promise.resolve() }
+
 const appStore = useAppStore()
 const { keyMap, setting, bookDetail } = storeToRefs(appStore)
 const { printMessage, saveBook } = appStore
@@ -268,7 +270,7 @@ const showViewerSide = ref(true)
 const showThumbnail = ref(false)
 const viewerImageWidth = ref(0.9)
 watch(viewerImageWidth, () => localStorage.setItem('viewerImageWidth', viewerImageWidth.value))
-const imageStyleType = ref('scroll')
+const imageStyleType = ref('single')
 const imageStyleFit = ref('window')
 const viewerReadingProgress = ref([])
 const currentImageId = ref('')
@@ -338,7 +340,7 @@ const flushPendingThumbnails = () => {
 
 onMounted(() => {
   viewerImageWidth.value = +localStorage.getItem('viewerImageWidth') || 0.9
-  imageStyleType.value = localStorage.getItem('imageStyleType') || 'scroll'
+  imageStyleType.value = localStorage.getItem('imageStyleType') || 'single'
   imageStyleFit.value = localStorage.getItem('imageStyleFit') || 'window'
   viewerReadingProgress.value = JSON.parse(localStorage.getItem('viewerReadingProgress')) || []
 
@@ -1036,7 +1038,7 @@ defineExpose({
   color: var(--el-color-primary) !important
 
 .viewer-mode-setting
-  opacity: 0.1
+  opacity: 0.7
   position: absolute
   width: 100px
   top: 8px
