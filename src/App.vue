@@ -41,6 +41,14 @@
         <el-button :icon="ArrowTrendingLines20Filled" plain @click="$refs.TagGraphRef.displayTagGraph()" :title="$t('m.tagAnalysis')"></el-button>
       </el-col>
       <el-col :span="1">
+        <el-button 
+          :icon="viewMode === 'card' ? AppsList24Filled : Grid24Filled" 
+          plain 
+          @click="toggleViewMode" 
+          :title="viewMode === 'card' ? '紧凑列表' : '卡片视图'"
+        ></el-button>
+      </el-col>
+      <el-col :span="1">
         <el-button :icon="SettingIcon" plain @click="$refs.SettingRef.dialogVisibleSetting = true" :title="$t('m.setting')"></el-button>
       </el-col>
       <el-col :span="3">
@@ -105,29 +113,28 @@
       @search="handleSearchString"
     />
     <el-row :gutter="20" class="book-card-area">
-      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="book-card-list" :class="{'compact-mode': setting.displayMode === 'compact'}" :style="{height: setting.disableRandomTag ? 'calc(100vh - 96px)' : 'calc(100vh - 134px)'}">
+      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="book-card-list" :class="{'compact-mode': viewMode === 'compact'}" :style="{height: setting.disableRandomTag ? 'calc(100vh - 96px)' : 'calc(100vh - 134px)'}">
         <div
           v-for="(book, index) in visibleChunkDisplayBookList"
           :key="book.id"
           class="book-card-frame"
+          :class="{'compact-frame': viewMode === 'compact'}"
           v-lazy:[book.id]="{'enter': loadBookCardContent, 'leave': unloadBookCardContent}"
           :tabindex="index + 1"
         >
           <transition name="pop">
-            <template v-if="setting.displayMode === 'compact'">
+            <template v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]">
               <BookCardCompact
+                v-if="viewMode === 'compact'"
                 :book="book"
-                v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]"
                 @open-book-detail="$refs.BookDetailDialogRef.openBookDetail(book)"
                 @on-book-context-menu="onBookContextMenu"
                 @open-local-book="$refs.BookDetailDialogRef.openLocalBook(book)"
                 @view-manga="$refs.InternalViewerRef.viewManga(book)"
               />
-            </template>
-            <template v-else>
               <BookCard
+                v-else
                 :book="book"
-                v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]"
                 @open-book-detail="$refs.BookDetailDialogRef.openBookDetail(book)"
                 @handle-click-cover="handleClickCover(book)"
                 @on-book-context-menu="onBookContextMenu"
@@ -138,8 +145,8 @@
               />
             </template>
             <BookCardCollection
-              :book="book"
               v-else-if="book.isCollection && !book.folderHide && visibilityMap[book.id]"
+              :book="book"
               @open-collection="openCollection(book)"
             />
           </transition>
@@ -158,10 +165,10 @@
       <el-pagination
         v-model:currentPage="currentPage"
         v-model:page-size="setting.pageSize"
-        :page-sizes="[12, 24, 42, 72, 500, 5000, 1000000]"
+        :page-sizes="[12, 24, 42, 72, 200, 500]"
         size="small"
         layout="total, sizes, prev, pager, next, jumper"
-        :total="displayBookCount"
+        :total="lockedTotalForUI"
         @size-change="handleSizeChange"
         @current-change="handleCurrentPageChange"
         background
@@ -244,7 +251,7 @@
 <script>
 import { defineComponent } from 'vue'
 import { Setting as SettingIcon, FullScreen, Edit } from '@element-plus/icons-vue'
-import { ArrowTrendingLines20Filled, Collections24Regular, Search32Filled, Save16Regular } from '@vicons/fluent'
+import { ArrowTrendingLines20Filled, Collections24Regular, Search32Filled, Save16Regular, AppsList24Filled, Grid24Filled } from '@vicons/fluent'
 import { MdShuffle, MdRefresh, MdCodeDownload, MdExit } from '@vicons/ionicons4'
 import { TreeViewAlt, CicsSystemGroup, TagGroup } from '@vicons/carbon'
 
@@ -283,6 +290,7 @@ export default defineComponent({
     return {
       SettingIcon, FullScreen, Edit,
       Collections24Regular, Search32Filled, ArrowTrendingLines20Filled, Save16Regular,
+      AppsList24Filled, Grid24Filled,
       MdRefresh, MdCodeDownload, MdExit, MdShuffle,
       TreeViewAlt, CicsSystemGroup, TagGroup
     }
@@ -298,6 +306,18 @@ export default defineComponent({
       buttonLoadBookListLoading: false,
       buttonGetMetadatasLoading: false,
       actionHistory: [],
+      // VIEW STATIC ISOLATION: Pagination is completely frozen during scan
+      // lockedTotalForUI: ONLY updated on manual user action (refresh button, search)
+      // realtimeTotal: Updated during scan for progress display only
+      // SCANNING FLAG: True during background scan
+      isScanning: false,
+      lockedTotalForUI: 0,
+      realtimeTotal: 0,
+      // LEGACY: Keep for compatibility
+      isPaginationLocked: false,
+      lockedTotalCount: 0,
+      scanningTotal: 0,
+
       // collection
       drawerVisibleCollection: false,
       openCollectionTitle: undefined,
@@ -321,6 +341,7 @@ export default defineComponent({
       'openCollectionBookList',
       'serviceAvailable',
       'sortValue',
+      'viewMode',
       'editCollectionView',
       'editTagView',
       'folderTreeData',
@@ -329,18 +350,22 @@ export default defineComponent({
       'tagList',
       'tag2cat',
       'customOptions',
-      'visibleChunkDisplayBookList',
+       'visibleChunkDisplayBookList',
+       'chunkDisplayBookList',
+       'totalBookCount',
+       'pagination',
     ]),
     currentPage: {
       get () {
         return this.currentPage_
       },
       set (val) {
-        const pageLimit = Math.ceil(this.displayBookCount / this.setting.pageSize)
+        // FIX: Use lockedTotalForUI (total count from DB) instead of displayBookCount (current page size)
+        const pageLimit = Math.ceil(this.lockedTotalForUI / this.setting.pageSize)
         if (Number.isInteger(val)) {
           if (val < 1) {
             this.currentPage_ = 1
-          } else if (val > pageLimit) {
+          } else if (val > pageLimit && pageLimit > 0) {
             this.currentPage_ = pageLimit
           } else {
             this.currentPage_ = val
@@ -350,6 +375,7 @@ export default defineComponent({
     },
   },
   mounted () {
+    console.log('App mounted!')
     ipcRenderer.on('send-message', (event, arg) => {
       this.printMessage('info', arg)
       if (arg.includes('failed')) {
@@ -360,20 +386,45 @@ export default defineComponent({
     })
     ipcRenderer.invoke('load-setting')
     .then(async (res) => {
+      console.log('Setting loaded:', res)
       this.setting = res
-      if (this.setting.loadOnStart) {
-        // display exist books first then load new books
-        await this.loadBookList()
-        this.loadBookList(true)
-      } else {
-        this.loadBookList()
+      // 加载库列表
+      console.log('Calling loadLibraryList...')
+      try {
+        const libraries = await ipcRenderer.invoke('get-libraries')
+        console.log('get-libraries result:', libraries)
+        this.libraryList = libraries || []
+      } catch (e) {
+        console.error('get-libraries error:', e)
+        this.libraryList = []
       }
+      console.log('libraryList:', this.libraryList)
+      // Always load database first for instant display
+      console.log('Calling loadBookList()...')
+      await this.loadBookList()
+      console.log('loadBookList completed')
+      // Auto scan in background (no need for loadOnStart option)
+      // Check if there are any libraries configured
+      if (this.libraryList && this.libraryList.length > 0) {
+        console.log('Starting background scan...')
+        // Don't await - let scan run in background
+        this.loadBookList(true)
+      } else if (this.setting.library) {
+        console.log('Starting background scan (legacy)...')
+        // Backward compatibility: if no libraries but setting.library exists
+        this.loadBookList(true)
+      }
+    })
+    .catch(err => {
+      console.error('Error during initialization:', err)
     })
     this.sortValue = localStorage.getItem('sortValue')
     this.sortValue = this.sortValue === 'null' ? undefined : this.sortValue === 'undefined' ? undefined : this.sortValue
     window.addEventListener('keydown', this.resolveKey)
     window.addEventListener('wheel', this.resolveWheel)
     window.addEventListener('mousedown', this.resolveMouseDown)
+    
+    // VIEW ISOLATION: Listen for scan progress updates only
     ipcRenderer.on('send-action', async (event, arg) => {
       switch (arg.action) {
         case 'setting':
@@ -389,6 +440,7 @@ export default defineComponent({
           this.$refs.SettingRef.activeSettingPanel = 'accelerator'
           break
         case 'send-progress':
+          // Only update progress bar, NOT book list
           this.progress = +arg.progress > 1 ? 100 : +arg.progress < 0 ? 0 : +arg.progress * 100
           break
         case 'tag-fail-non-tag-book':
@@ -401,6 +453,26 @@ export default defineComponent({
             }
           }
           break
+        case 'refresh-book-list':
+          // VIEW STATIC ISOLATION: During scan, ONLY update realtimeTotal
+          // NEVER touch lockedTotalForUI - pagination stays frozen
+          this.realtimeTotal = arg?.total || this.realtimeTotal
+          // Also update scanningTotal for progress bar
+          this.scanningTotal = arg?.total || this.scanningTotal
+          break
+        case 'scan-complete':
+          // Scan finished - update realtimeTotal, NOT lockedTotalForUI
+          // User must manually refresh to sync pagination
+          this.realtimeTotal = arg.total || this.realtimeTotal
+          this.scanningTotal = arg.total || this.scanningTotal
+          this.isScanning = false
+          const msg = `扫描完成: ${arg.newCount} 新书, ${arg.coversGenerated || 0} 封面, ${arg.metadataMatched || 0} 元数据匹配`
+          this.printMessage('success', msg)
+          break
+        case 'scan-started':
+          // Mark scan as active
+          this.isScanning = true
+          break
       }
     })
   },
@@ -409,11 +481,13 @@ export default defineComponent({
     window.removeEventListener('wheel', this.resolveWheel)
     window.removeEventListener('mousedown', this.resolveMouseDown)
   },
-  watch: {
-    bookList () {
-      this.handleSortChange(this.sortValue, this.bookList)
-    },
-  },
+  // VIEW SILENCE: Remove bookList watch to prevent scrollbar reset
+  // bookList changes should NOT trigger automatic view updates
+  // watch: {
+  //   bookList () {
+  //     this.handleSortChange(this.sortValue, this.bookList)
+  //   },
+  // },
   methods: {
     ...mapActions(useAppStore, [
       'isBook',
@@ -425,6 +499,13 @@ export default defineComponent({
       'copyTagClipboard',
       'pasteTagClipboard',
       'filterFolderMethod',
+      'loadLibraryList',
+      'addLibrary',
+      'updateLibrary',
+      'deleteLibrary',
+      'loadBookListPaged',
+      'setPagination',
+      'getBookCount',
     ]),
 
     // base function
@@ -637,20 +718,10 @@ export default defineComponent({
     switchFullscreen () {
       ipcRenderer.invoke('switch-fullscreen')
     },
-    customChunk (list, size, index) {
-      const result = []
-      let count = 0
-      let countIndex = 0
-      _.forEach(list, (book) => {
-        if (countIndex === index) result.push(book)
-        if (this.isVisibleBook(book)) count++
-        if (count >= size) {
-          countIndex++
-          count = 0
-        }
-        if (countIndex > index) return false
-      })
-      return result
+    toggleViewMode () {
+      this.viewMode = this.viewMode === 'card' ? 'compact' : 'card'
+      // Reset pagination when switching view mode
+      this.chunkList()
     },
     sortList(label) {
       return (a, b) => {
@@ -674,11 +745,56 @@ export default defineComponent({
     async loadBookList (scan) {
       try {
         this.buttonLoadBookListLoading = true
-        const res = await ipcRenderer.invoke('load-book-list', scan)
-        const bookList = this.prepareBookList(res)
-        await this.loadCollectionList(bookList)
-        this.bookList = bookList
-        await this.$refs.FolderTreeRef.geneFolderTree()
+        
+        // PAGINATION: Use paged loading for initial display
+        // First, get total count and load first page
+        // FIX: Sync pageSize from setting to pagination before loading
+        this.pagination.pageSize = this.setting.pageSize || 12
+        
+        // IMPORTANT: Clone pagination values to avoid DataCloneError with Vue 3 Proxy objects
+        const paginationParams = JSON.parse(JSON.stringify({
+          page: 1,
+          pageSize: this.pagination.pageSize,
+          sortField: this.pagination.sortField,
+          sortOrder: this.pagination.sortOrder,
+          filters: this.pagination.filters
+        }))
+        
+        // CLEAR OLD DATA: Reset displayBookList before setting new data
+        // This prevents old data from lingering during page transitions
+        this.displayBookList = []
+        this.chunkDisplayBookList = []
+        
+        const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+        
+        if (result && result.data) {
+          // Prepare book list (add pageDiff flag)
+          result.data.forEach(book => {
+            if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
+              book.pageDiff = true
+            }
+          })
+          
+          this.bookList = result.data
+          this.displayBookList = result.data
+          this.totalBookCount = result.total
+          // VIEW STATIC ISOLATION: Sync both totals on user-initiated load
+          this.lockedTotalForUI = result.total
+          this.realtimeTotal = result.total
+          this.lockedTotalCount = result.total
+          this.pagination.page = result.page
+          
+          this.currentPage = 1
+          this.chunkDisplayBookList = this.displayBookList
+        }
+        
+        // Load collections
+        await this.loadCollectionList(this.bookList)
+        
+        // Generate folder tree (only once on initial load)
+        if (!scan) {
+          await this.$refs.FolderTreeRef.geneFolderTree()
+        }
         this.$refs.FolderTreeRef.resetSelect()
         this.$refs.EditViewRef.selectBookList = []
         this.buttonLoadBookListLoading = false
@@ -686,7 +802,15 @@ export default defineComponent({
         this.buttonLoadBookListLoading = false
         console.error(error)
       }
-      if (scan) this.printMessage('success', this.$t('c.scanComplete'))
+      
+      // Start background scan if requested
+      if (scan) {
+        // Mark scan as active BEFORE triggering
+        this.isScanning = true
+        // Trigger background scan
+        ipcRenderer.invoke('load-book-list', true)
+        this.printMessage('info', this.$t('c.scanStarted') || 'Scan started in background...')
+      }
     },
     prepareBookList (bookList) {
       bookList.forEach(book => {
@@ -721,110 +845,75 @@ export default defineComponent({
     },
     shuffleBook () {
       this.sortValue = 'shuffle'
+      // For shuffle, we still need to load from backend but with random order
+      // For now, just shuffle the current display list
       this.displayBookList = _.shuffle(this.displayBookList)
-      this.chunkList()
+      this.chunkDisplayBookList = this.displayBookList
     },
-    handleSortChange (val, bookList) {
-      if (!bookList) bookList = this.displayBookList
-      switch(val){
-        case 'mark':
-          this.displayBookList = _.filter(this.bookList, 'mark')
-          this.chunkList()
-          break
-        case 'collection':
-          this.displayBookList = _.filter(this.bookList, 'isCollection')
-          this.chunkList()
-          break
-        case 'hidden':
-          this.displayBookList = _.filter(this.bookList, 'hiddenBook')
-          this.chunkList()
-          break
-        case 'recentRead':
-          const recentReads =  fetchRecentReads()
-          this.displayBookList = _.uniqBy(
-            recentReads.map(id => this.bookList.find(book => {
-              if (book.collectionHide) return false
-              if (book.isCollection) return book.ids.includes(id)
-              return book.id === id
-            }))
-            .filter(book => book !== undefined),
-            'id'
-          )
-          this.chunkList()
-          break
-        case 'shuffle':
-          this.displayBookList = _.shuffle(bookList)
-          this.chunkList()
-          break
-        case 'addAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('date')).toReversed()
-          this.chunkList()
-          break
-        case 'addDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('date'))
-          this.chunkList()
-          break
-        case 'mtimeAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('mtime')).toReversed()
-          this.chunkList()
-          break
-        case 'mtimeDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('mtime'))
-          this.chunkList()
-          break
-        case 'postAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('posted')).toReversed()
-          this.chunkList()
-          break
-        case 'postDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('posted'))
-          this.chunkList()
-          break
-        case 'scoreAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('rating')).toReversed()
-          this.chunkList()
-          break
-        case 'scoreDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('rating'))
-          this.chunkList()
-          break
-        case 'readCountAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('readCount')).toReversed()
-          this.chunkList()
-          break
-        case 'readCountDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('readCount'))
-          this.chunkList()
-          break
-        case 'artistAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('tags.artist')).toReversed()
-          this.chunkList()
-          break
-        case 'artistDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('tags.artist'))
-          this.chunkList()
-          break
-        case 'titleAscend':
-          this.displayBookList = bookList.toSorted((a, b) => this.getDisplayTitle(b).localeCompare(this.getDisplayTitle(a), undefined, {numeric: true, sensitivity: 'base'})).toReversed()
-          this.chunkList()
-          break
-        case 'titleDescend':
-          this.displayBookList = bookList.toSorted((a, b) => this.getDisplayTitle(b).localeCompare(this.getDisplayTitle(a), undefined, {numeric: true, sensitivity: 'base'}))
-          this.chunkList()
-          break
-        case 'pageAscend':
-          this.displayBookList = bookList.toSorted(this.sortList('pageCount')).toReversed()
-          this.chunkList()
-          break
-        case 'pageDescend':
-          this.displayBookList = bookList.toSorted(this.sortList('pageCount'))
-          this.chunkList()
-          break
-        default:
-          this.displayBookList = this.bookList
-          this.chunkList()
-          break
+    async handleSortChange (val, bookList) {
+      // PAGINATION: Map sort values to backend parameters
+      const sortMap = {
+        'addAscend': { field: 'date', order: 'ASC' },
+        'addDescend': { field: 'date', order: 'DESC' },
+        'mtimeAscend': { field: 'mtime', order: 'ASC' },
+        'mtimeDescend': { field: 'mtime', order: 'DESC' },
+        'postAscend': { field: 'posted', order: 'ASC' },
+        'postDescend': { field: 'posted', order: 'DESC' },
+        'scoreAscend': { field: 'rating', order: 'ASC' },
+        'scoreDescend': { field: 'rating', order: 'DESC' },
+        'readCountAscend': { field: 'readCount', order: 'ASC' },
+        'readCountDescend': { field: 'readCount', order: 'DESC' },
+        'titleAscend': { field: 'title', order: 'ASC' },
+        'titleDescend': { field: 'title', order: 'DESC' },
+        'pageAscend': { field: 'pageCount', order: 'ASC' },
+        'pageDescend': { field: 'pageCount', order: 'DESC' },
       }
+      
+      // Handle special filter cases that need to modify filters
+      if (val === 'mark') {
+        this.pagination.filters = { ...this.pagination.filters, mark: true }
+      } else if (val === 'hidden') {
+        this.pagination.filters = { ...this.pagination.filters, hiddenBook: true }
+      } else if (val === 'collection') {
+        // Collection filter is handled differently - keep local filtering for now
+        this.displayBookList = _.filter(this.bookList, 'isCollection')
+        this.chunkDisplayBookList = this.displayBookList
+        localStorage.setItem('sortValue', val)
+        return
+      } else if (val === 'recentRead') {
+        // Recent read is handled locally
+        const recentReads = fetchRecentReads()
+        this.displayBookList = _.uniqBy(
+          recentReads.map(id => this.bookList.find(book => {
+            if (book.collectionHide) return false
+            if (book.isCollection) return book.ids.includes(id)
+            return book.id === id
+          }))
+          .filter(book => book !== undefined),
+          'id'
+        )
+        this.chunkDisplayBookList = this.displayBookList
+        localStorage.setItem('sortValue', val)
+        return
+      } else if (val === 'shuffle') {
+        // Shuffle is handled locally
+        this.displayBookList = _.shuffle(this.bookList)
+        this.chunkDisplayBookList = this.displayBookList
+        localStorage.setItem('sortValue', val)
+        return
+      } else if (val === '' || val === undefined || val === null) {
+        // No sort - clear filters and use default
+        this.pagination.filters = {}
+        this.pagination.sortField = 'date'
+        this.pagination.sortOrder = 'DESC'
+      } else if (sortMap[val]) {
+        // Use backend sorting
+        this.pagination.sortField = sortMap[val].field
+        this.pagination.sortOrder = sortMap[val].order
+      }
+      
+      // Load from backend with new sort/filter
+      await this.chunkList()
       localStorage.setItem('sortValue', val)
     },
     querySearch (queryString, callback) {
@@ -1075,19 +1164,79 @@ export default defineComponent({
     unloadBookCardContent (id) {
       this.visibilityMap[id] = false
     },
-    chunkList () {
+    async chunkList () {
       this.currentPage = 1
-      this.chunkDisplayBookList = this.customChunk(this.displayBookList, this.setting.pageSize, 0)
+      // PAGINATION: Reset to first page with current filters
+      try {
+        // IMPORTANT: Clone pagination values to avoid DataCloneError
+        const paginationParams = JSON.parse(JSON.stringify({
+          page: 1,
+          pageSize: this.pagination.pageSize,
+          sortField: this.pagination.sortField,
+          sortOrder: this.pagination.sortOrder,
+          filters: this.pagination.filters
+        }))
+        const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+        
+        if (result && result.data) {
+          result.data.forEach(book => {
+            if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
+              book.pageDiff = true
+            }
+          })
+          
+          this.bookList = result.data
+          this.displayBookList = result.data
+          this.chunkDisplayBookList = result.data
+          this.totalBookCount = result.total
+          this.pagination.page = 1
+          // VIEW STATIC ISOLATION: Sync on user-initiated chunk
+          this.lockedTotalForUI = result.total
+          this.realtimeTotal = result.total
+          this.lockedTotalCount = result.total
+        }
+      } catch (e) {
+        console.error('chunkList error:', e)
+      }
       this.scrollMainPageTop()
     },
-    handleSizeChange () {
-      this.chunkList()
+    async handleSizeChange () {
+      // PAGINATION: Update page size and reload
+      this.pagination.pageSize = this.setting.pageSize
+      await this.chunkList()
       this.$refs.SettingRef.saveSetting()
       this.scrollMainPageTop()
     },
-    handleCurrentPageChange (currentPage) {
+    async handleCurrentPageChange (currentPage) {
+      // USER SOVEREIGNTY: No blocking - user can always change pages
       this.visibilityMap = {}
-      this.chunkDisplayBookList = this.customChunk(this.displayBookList, this.setting.pageSize, currentPage - 1)
+      // PAGINATION: Load new page from backend
+      try {
+        // IMPORTANT: Clone pagination values to avoid DataCloneError
+        const paginationParams = JSON.parse(JSON.stringify({
+          page: currentPage,
+          pageSize: this.pagination.pageSize,
+          sortField: this.pagination.sortField,
+          sortOrder: this.pagination.sortOrder,
+          filters: this.pagination.filters
+        }))
+        const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+        
+        if (result && result.data) {
+          result.data.forEach(book => {
+            if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
+              book.pageDiff = true
+            }
+          })
+          
+          this.bookList = result.data
+          this.displayBookList = result.data
+          this.chunkDisplayBookList = result.data
+          this.pagination.page = currentPage
+        }
+      } catch (e) {
+        console.error('handleCurrentPageChange error:', e)
+      }
       this.scrollMainPageTop()
     },
     scrollMainPageTop () {
@@ -1284,7 +1433,8 @@ export default defineComponent({
       this.$refs.InternalViewerRef.viewManga(book)
     },
     handleRemoveBookDisplay () {
-      this.chunkDisplayBookList = this.customChunk(this.displayBookList, this.setting.pageSize, this.currentPage - 1)
+      // PAGINATION: Just refresh current page from backend
+      this.handleCurrentPageChange(this.currentPage)
     },
 
     // internal viewer
@@ -1411,6 +1561,11 @@ body
   min-width: 234px
   min-height: 383px
   display: inline-block
+  &.compact-frame
+    min-width: unset
+    min-height: unset
+    width: 100%
+    display: block
 
 .collection-book-card-list
   display: flex
