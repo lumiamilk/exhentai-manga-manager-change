@@ -28,6 +28,14 @@
           </el-col>
           <el-col :span="24">
             <div class="setting-line">
+              <el-input v-model="setting.hitomiDataPath">
+                <template #prepend><span class="setting-label">{{$t('m.hitomiDataPath')}}</span></template>
+                <template #append><el-button @click="selectHitomiDataPath">{{$t('m.select')}}</el-button></template>
+              </el-input>
+            </div>
+          </el-col>
+          <el-col :span="24">
+            <div class="setting-line">
               <el-input v-model="setting.imageExplorer" @change="saveSetting">
                 <template #prepend><span class="setting-label">{{$t('m.imageViewer')}}</span></template>
                 <template #append><el-button @click="selectImageExplorerPath">{{$t('m.select')}}</el-button></template>
@@ -230,6 +238,17 @@
                   <el-option :label="$t('m.englishTitle')" value="englishTitle"></el-option>
                   <el-option :label="$t('m.japaneseTitle')" value="japaneseTitle"></el-option>
                   <el-option :label="$t('m.filename')" value="filename"></el-option>
+                </el-select>
+              </NameFormItem>
+            </div>
+          </el-col>
+          <el-col :span="24">
+            <div class="setting-line">
+              <NameFormItem class="label-input" prependWidth="110px">
+                <template #prepend><span class="setting-label">{{$t('m.displayMode')}}</span></template>
+                <el-select v-model="setting.displayMode" @change="saveSetting">
+                  <el-option :label="$t('m.cardMode')" value="card"></el-option>
+                  <el-option :label="$t('m.compactMode')" value="compact"></el-option>
                 </el-select>
               </NameFormItem>
             </div>
@@ -542,6 +561,14 @@ const selectMetadataPath = () => {
   ipcRenderer.invoke('select-folder', t('m.metadataPath'))
   .then(res => {
     setting.value.metadataPath = res
+    saveSetting()
+  })
+}
+
+const selectHitomiDataPath = () => {
+  ipcRenderer.invoke('select-folder', t('m.hitomiDataPath'))
+  .then(res => {
+    setting.value.hitomiDataPath = res
     saveSetting()
   })
 }

@@ -44,6 +44,7 @@ const prepareSetting = () => {
       proxy: undefined,
       library: app.getPath('downloads'),
       metadataPath: undefined,
+      hitomiDataPath: undefined,
       imageExplorer: '\"C:\\Windows\\explorer.exe\"',
       pageSize: 42,
       loadOnStart: false,
@@ -68,6 +69,7 @@ const prepareSetting = () => {
       skipDeleteConfirm: false,
       displayTitle: 'japaneseTitle',
       keepReadingProgress: true,
+      displayMode: 'card',
     }
     fs.writeFileSync(path.join(STORE_PATH, 'setting.json'), JSON.stringify(setting, null, '  '), { encoding: 'utf-8' })
   }

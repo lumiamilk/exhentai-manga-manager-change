@@ -105,7 +105,7 @@
       @search="handleSearchString"
     />
     <el-row :gutter="20" class="book-card-area">
-      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="book-card-list" :style="{height: setting.disableRandomTag ? 'calc(100vh - 96px)' : 'calc(100vh - 134px)'}">
+      <el-col :span="24" v-if="!editTagView && !editCollectionView" class="book-card-list" :class="{'compact-mode': setting.displayMode === 'compact'}" :style="{height: setting.disableRandomTag ? 'calc(100vh - 96px)' : 'calc(100vh - 134px)'}">
         <div
           v-for="(book, index) in visibleChunkDisplayBookList"
           :key="book.id"
@@ -114,20 +114,29 @@
           :tabindex="index + 1"
         >
           <transition name="pop">
-            <!-- show book card when book isn't a collection, book isn't hidden because collected,
-              and book isn't hidden by user except sorting by onlyHiddenBook
-              and book isn't hidden by folder select -->
-            <BookCard
-              :book="book"
-              v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]"
-              @open-book-detail="$refs.BookDetailDialogRef.openBookDetail(book)"
-              @handle-click-cover="handleClickCover(book)"
-              @on-book-context-menu="onBookContextMenu"
-              @handle-search-string="handleSearchString"
-              @search-from-tag="searchFromTag"
-              @open-local-book="$refs.BookDetailDialogRef.openLocalBook(book)"
-              @view-manga="$refs.InternalViewerRef.viewManga(book)"
-            />
+            <template v-if="setting.displayMode === 'compact'">
+              <BookCardCompact
+                :book="book"
+                v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]"
+                @open-book-detail="$refs.BookDetailDialogRef.openBookDetail(book)"
+                @on-book-context-menu="onBookContextMenu"
+                @open-local-book="$refs.BookDetailDialogRef.openLocalBook(book)"
+                @view-manga="$refs.InternalViewerRef.viewManga(book)"
+              />
+            </template>
+            <template v-else>
+              <BookCard
+                :book="book"
+                v-if="!book.isCollection && !book.collectionHide && (sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide && visibilityMap[book.id]"
+                @open-book-detail="$refs.BookDetailDialogRef.openBookDetail(book)"
+                @handle-click-cover="handleClickCover(book)"
+                @on-book-context-menu="onBookContextMenu"
+                @handle-search-string="handleSearchString"
+                @search-from-tag="searchFromTag"
+                @open-local-book="$refs.BookDetailDialogRef.openLocalBook(book)"
+                @view-manga="$refs.InternalViewerRef.viewManga(book)"
+              />
+            </template>
             <BookCardCollection
               :book="book"
               v-else-if="book.isCollection && !book.folderHide && visibilityMap[book.id]"
@@ -248,6 +257,7 @@ import SearchDialog from './components/SearchDialog.vue'
 import BookDetailDialog from './components/BookDetailDialog.vue'
 import FolderTree from './components/FolderTree.vue'
 import BookCard from './components/BookCard.vue'
+import BookCardCompact from './components/BookCardCompact.vue'
 import BookCardCollection from './components/BookCardCollection.vue'
 import EditView from './components/EditView.vue'
 import RandomTags from './components/RandomTags.vue'
@@ -264,6 +274,7 @@ export default defineComponent({
     BookDetailDialog,
     FolderTree,
     BookCard,
+    BookCardCompact,
     BookCardCollection,
     EditView,
     RandomTags,
@@ -1391,6 +1402,10 @@ body
     flex-wrap: wrap
     justify-content: center
     align-content: flex-start
+    &.compact-mode
+      display: block
+      height: calc(100vh - 96px)
+      overflow-y: auto
 
 .book-card-frame
   min-width: 234px

@@ -22,6 +22,9 @@ const { getBookFilelist, geneCover, getImageListByBook, deleteImageFromBook } = 
 const { STORE_PATH, isPortable, TEMP_PATH, COVER_PATH, VIEWER_PATH, prepareSetting, prepareCollectionList, preparePath } = require('./modules/init_folder_setting.js')
 const { findSameFile } = require('./fileLoader/folder.js')
 
+let hitomiMetadataCache = {}
+let hitomiMetadataLoader = null
+
 preparePath()
 let setting = prepareSetting()
 let collectionList = prepareCollectionList()
@@ -48,6 +51,94 @@ const getColumns = async (sequelize, tableName) => {
   }
   await Metadata.sync()
 })()
+
+const loadHitomiMetadata = async () => {
+  if (!setting.hitomiDataPath) return
+  
+  const hitomiDataDir = setting.hitomiDataPath
+  if (!fs.existsSync(hitomiDataDir)) {
+    console.log('Hitomi data directory not found:', hitomiDataDir)
+    return
+  }
+  
+  sendMessageToWebContents('Loading Hitomi metadata...')
+  
+  try {
+    const msgpack = require('msgpackr')
+    const files = fs.readdirSync(hitomiDataDir).filter(f => f.endsWith('_pack.json'))
+    
+    let loadedCount = 0
+    for (const file of files) {
+      const filepath = path.join(hitomiDataDir, file)
+      try {
+        const buffer = fs.readFileSync(filepath)
+        const data = msgpack.unpack(buffer)
+        
+        for (const item of data) {
+          const comicId = String(item.id)
+          hitomiMetadataCache[comicId] = {
+            title: item.n || '',
+            title_jpn: '',
+            artists: item.a || [],
+            groups: item.g || [],
+            series: item.p || [],
+            characters: item.c || [],
+            tags: item.t || [],
+            language: item.l || '',
+            type: item.type || '',
+            pageCount: item.pg || 0,
+            date: item.d ? new Date(item.d * 1000) : null,
+          }
+          loadedCount++
+        }
+      } catch (e) {
+        console.log('Error loading hitomi file:', file, e.message)
+      }
+    }
+    console.log(`Loaded ${loadedCount} Hitomi metadata entries`)
+    sendMessageToWebContents(`Loaded ${loadedCount} Hitomi metadata entries`)
+  } catch (e) {
+    console.log('Error loading Hitomi metadata:', e.message)
+  }
+}
+
+const extractHitomiIdFromFilename = (filename) => {
+  const match = filename.match(/\((\d+)\)\s*(?:\.|$)/)
+  return match ? match[1] : null
+}
+
+const matchHitomiMetadata = async (book) => {
+  if (!setting.hitomiDataPath || Object.keys(hitomiMetadataCache).length === 0) return
+  
+  const hitomiId = extractHitomiIdFromFilename(book.title)
+  if (!hitomiId) return
+  
+  const metadata = hitomiMetadataCache[hitomiId]
+  if (!metadata) return
+  
+  book.hitomiId = hitomiId
+  if (!book.title_jpn && metadata.title_jpn) book.title_jpn = metadata.title_jpn
+  if (!book.tags || Object.keys(book.tags).length === 0) {
+    const tags = {}
+    if (metadata.artists?.length) tags.artist = metadata.artists
+    if (metadata.groups?.length) tags.group = metadata.groups
+    if (metadata.characters?.length) tags.character = metadata.characters
+    if (metadata.series?.length) tags.parody = metadata.series
+    if (metadata.tags?.length) tags.other = metadata.tags
+    if (metadata.language) tags.language = [metadata.language]
+    book.tags = tags
+  }
+  if (!book.filecount && metadata.pageCount) book.filecount = metadata.pageCount
+  if (!book.category && metadata.type) book.category = metadata.type
+  if (metadata.date && !book.posted) {
+    book.posted = Math.floor(metadata.date.getTime() / 1000)
+  }
+  if (metadata.title && !book.title.startsWith('[')) {
+    book.title = metadata.title
+  }
+  book.status = 'tagged'
+  book.hitomiMatched = true
+}
 
 const logFile = fs.createWriteStream(path.join(STORE_PATH, 'log.txt'), { flags: 'w' })
 const logStdout = process.stdout
@@ -258,6 +349,9 @@ const loadBookListFromDatabase = async () => {
   let metadataList = await Metadata.findAll()
   metadataList = metadataList.map(m => m.toJSON())
   const bookListLength = bookList.length
+  
+  await loadHitomiMetadata()
+  
   for (let i = 0; i < bookListLength; i++) {
     const book = bookList[i]
     const findMetadata = metadataList.find(m => m.hash === book.hash)
@@ -267,6 +361,12 @@ const loadBookListFromDatabase = async () => {
     } else {
       setProgressBar((i + 1) / bookListLength)
       await Metadata.upsert(book)
+    }
+    if (!book.hitomiMatched) {
+      await matchHitomiMetadata(book)
+      if (book.hitomiMatched) {
+        await saveBookToDatabase(book)
+      }
     }
   }
   setProgressBar(-1)
@@ -1373,4 +1473,15 @@ const enableLANBrowsing = () => {
 
 ipcMain.handle('enable-LAN-browsing', async (event, arg) => {
   enableLANBrowsing()
+})
+
+ipcMain.handle('get-preview-images', async (event, { filepath, type, count }) => {
+  try {
+    const imageList = await getImageListByBook(filepath, type || 'archive')
+    const previewImages = imageList.slice(0, count || 3).map(img => img.absolutePath)
+    return { images: previewImages }
+  } catch (e) {
+    console.log('Failed to get preview images:', e)
+    return { images: [] }
+  }
 })
