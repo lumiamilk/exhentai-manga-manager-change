@@ -36,43 +36,54 @@ const preparePath = () => {
 }
 
 const prepareSetting = () => {
+  const defaultSetting = {
+    proxy: undefined,
+    library: app.getPath('downloads'),
+    libraries: [],
+    metadataPath: undefined,
+    hitomiDataPath: 'D:\\soft\\to_run\\Technical Preview Hitomi-Downloader\\core\\hitomi_data',
+    imageExplorer: '"C:\\Windows\\explorer.exe"',
+    pageSize: 42,
+    loadOnStart: true,
+    igneous: '',
+    ipb_pass_hash: '',
+    ipb_member_id: '',
+    star: '',
+    showComment: true,
+    requireGap: 3000,
+    thumbnailColumn: 10,
+    showTranslation: false,
+    theme: 'light e-hentai',
+    widthLimit: undefined,
+    directEnter: 'detail',
+    language: 'zh-CN',
+    folderTreeWidth: '',
+    advancedSearch: true,
+    autoCheckUpdates: false,
+    customOptions: '',
+    defaultExpandTree: true,
+    hidePageNumber: false,
+    skipDeleteConfirm: false,
+    displayTitle: 'japaneseTitle',
+    keepReadingProgress: true,
+  }
+  
   let setting
   try {
     setting = JSON.parse(fs.readFileSync(path.join(STORE_PATH, 'setting.json'), { encoding: 'utf-8' }))
+    // Merge with defaults to ensure all fields exist (backward compatibility)
+    setting = { ...defaultSetting, ...setting }
   } catch {
-    setting = {
-      proxy: undefined,
-      library: app.getPath('downloads'),
-      metadataPath: undefined,
-      hitomiDataPath: undefined,
-      imageExplorer: '\"C:\\Windows\\explorer.exe\"',
-      pageSize: 42,
-      loadOnStart: false,
-      igneous: '',
-      ipb_pass_hash: '',
-      ipb_member_id: '',
-      star: '',
-      showComment: true,
-      requireGap: 3000,
-      thumbnailColumn: 10,
-      showTranslation: false,
-      theme: 'light e-hentai',
-      widthLimit: undefined,
-      directEnter: 'detail',
-      language: 'default',
-      folderTreeWidth: '',
-      advancedSearch: true,
-      autoCheckUpdates: false,
-      customOptions: '',
-      defaultExpandTree: true,
-      hidePageNumber: false,
-      skipDeleteConfirm: false,
-      displayTitle: 'japaneseTitle',
-      keepReadingProgress: true,
-      displayMode: 'card',
-    }
+    setting = { ...defaultSetting }
     fs.writeFileSync(path.join(STORE_PATH, 'setting.json'), JSON.stringify(setting, null, '  '), { encoding: 'utf-8' })
   }
+  
+  // Backward compatibility: if libraries is empty but library exists,
+  // the migration will be handled in index.js
+  if (!setting.libraries) {
+    setting.libraries = []
+  }
+  
   return setting
 }
 

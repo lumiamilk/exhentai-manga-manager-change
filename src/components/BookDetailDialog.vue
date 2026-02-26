@@ -192,12 +192,42 @@ const emit = defineEmits([
 
 const dialogVisibleBookDetail = ref(false)
 
-const openBookDetail = (book, addToHistory = true) => {
+const openBookDetail = async (book, addToHistory = true) => {
   bookDetail.value = book
   dialogVisibleBookDetail.value = true
   comments.value = []
-  if (setting.value.showComment) getComments(book.url)
-  if (addToHistory) emit('addToHistory', book.id)
+  
+  // PRIORITY PREEMPTION: Always call get-metadata-now on detail open
+  // This bypasses background queues and ensures user sees latest data
+  // The backend will check if cover/metadata actually needs updating
+  try {
+    const result = await ipcRenderer.invoke('get-metadata-now', JSON.parse(JSON.stringify(book)))
+    
+    if (result) {
+      // Update cover if generated - update bookDetail.value directly for reactivity
+      if (result.coverGenerated && result.coverPath) {
+        bookDetail.value.coverPath = result.coverPath
+        bookDetail.value.hash = result.hash
+        bookDetail.value.pageCount = result.pageCount
+      }
+      
+      // Update metadata if found - update bookDetail.value directly for reactivity
+      if (result.metadataFound && result.metadata) {
+        bookDetail.value.title = result.metadata.title
+        bookDetail.value.title_jpn = result.metadata.title_jpn || bookDetail.value.title_jpn
+        bookDetail.value.tags = result.metadata.tags
+        bookDetail.value.status = result.metadata.status
+        bookDetail.value.category = result.metadata.category
+        bookDetail.value.posted = result.metadata.posted
+        bookDetail.value.url = result.metadata.url
+      }
+    }
+  } catch (e) {
+    console.log('Failed to fetch metadata on demand:', e)
+  }
+  
+  if (setting.value.showComment) getComments(bookDetail.value.url)
+  if (addToHistory) emit('addToHistory', bookDetail.value.id)
 }
 const openUrl = (url) => {
   ipcRenderer.invoke('open-url', url)
