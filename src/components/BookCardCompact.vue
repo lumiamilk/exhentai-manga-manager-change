@@ -1,57 +1,78 @@
 <template>
-  <div 
-    class="book-card-compact"
-    @click="$emit('openBookDetail')"
-    @contextmenu="$emit('onBookContextMenu', $event, book)"
-    @mouseenter="handleMouseEnter"
-    @mouseleave="handleMouseLeave"
+  <el-popover
+    :visible="showPreview"
+    :width="380"
+    placement="right"
+    :show-arrow="false"
+    :offset="8"
+    popper-class="compact-preview-popover"
   >
-    <div class="compact-main">
-      <img class="compact-cover" :src="getCoverUrl(book.coverPath)" @error="generateCoverOnDemand(book)" />
-      <div class="compact-info">
-        <p class="compact-title" :title="getDisplayTitle(book)">{{getDisplayTitle(book)}}</p>
-        <div class="compact-meta">
-          <el-tag size="small" :type="isChineseTranslatedManga(book) ? 'danger' : 'info'">{{ book.pageCount }}P</el-tag>
-          <el-tag size="small" :type="book.status === 'non-tag' ? 'info' : book.status === 'tagged' ? 'success' : 'warning'">{{book.status}}</el-tag>
-          <el-rate v-model="bookRating" size="small" allow-half @change="saveBook(Object.assign({}, book, {rating: bookRating}))" @click.stop />
-          <span class="compact-artist" v-if="artistList">{{ artistList }}</span>
+    <template #reference>
+      <div 
+        class="book-card-compact"
+        @click="$emit('openBookDetail')"
+        @contextmenu="$emit('onBookContextMenu', $event, book)"
+        @mouseenter="handleMouseEnter"
+        @mouseleave="handleMouseLeave"
+      >
+        <div class="compact-main">
+          <!-- 状态指示器替代缩略图 -->
+          <div class="compact-status-indicator" :class="statusClass">
+            <span class="status-icon">{{ book.pageCount || '?' }}P</span>
+          </div>
+          
+          <div class="compact-info">
+            <p class="compact-title" :title="getDisplayTitle(book)">{{getDisplayTitle(book)}}</p>
+            <div class="compact-meta">
+              <el-tag size="small" :type="isChineseTranslatedManga(book) ? 'danger' : 'info'">{{ book.pageCount }}P</el-tag>
+              <el-tag size="small" :type="book.status === 'non-tag' ? 'info' : book.status === 'tagged' ? 'success' : 'warning'">{{book.status}}</el-tag>
+              <el-rate v-model="bookRating" size="small" allow-half @change="saveBook(Object.assign({}, book, {rating: bookRating}))" @click.stop />
+              <span class="compact-artist" v-if="artistList">{{ artistList }}</span>
+            </div>
+          </div>
+          
+          <div class="compact-actions">
+            <el-button type="success" size="small" plain @click.stop="$emit('openLocalBook')">{{$t('m.re')}}</el-button>
+            <el-button type="primary" size="small" plain @click.stop="$emit('viewManga')">{{$t('m.ad')}}</el-button>
+            <el-icon
+              :size="20"
+              :color="book.mark ? '#E6A23C' : '#666666'"
+              class="compact-mark" @click.stop="switchMark(book)"
+            ><BookmarkTwotone /></el-icon>
+          </div>
         </div>
       </div>
-      <div class="compact-actions">
-        <el-button type="success" size="small" plain @click.stop="$emit('openLocalBook')">{{$t('m.re')}}</el-button>
-        <el-button type="primary" size="small" plain @click.stop="$emit('viewManga')">{{$t('m.ad')}}</el-button>
-        <el-icon
-          :size="20"
-          :color="book.mark ? '#E6A23C' : '#666666'"
-          class="compact-mark" @click.stop="switchMark(book)"
-        ><BookmarkTwotone /></el-icon>
-      </div>
-    </div>
+    </template>
     
-    <Teleport to="body">
-      <div 
-        v-if="showPreview && previewImages.length > 0"
-        class="compact-preview"
-        :style="previewStyle"
-      >
-        <img 
+    <!-- 悬浮预览内容 -->
+    <div class="preview-content" v-if="showPreview">
+      <div class="preview-loading" v-if="loadingPreview">
+        <el-icon class="is-loading" :size="24"><SyncOutlined /></el-icon>
+        <span>Loading preview...</span>
+      </div>
+      <div class="preview-images" v-else-if="previewImages.length > 0">
+        <div 
           v-for="(img, index) in previewImages" 
           :key="index"
-          :src="img"
           class="preview-image"
-        />
-        <div class="preview-loading" v-if="loadingPreview">
-          <el-icon class="is-loading"><Loading /></el-icon>
-        </div>
+          :style="{ backgroundImage: `url('${img}')` }"
+        ></div>
       </div>
-    </Teleport>
-  </div>
+      <div class="preview-cover" v-else-if="book.coverPath">
+        <div class="cover-image" :style="{ backgroundImage: `url('${getCoverUrl(book.coverPath)}')` }"></div>
+      </div>
+      <div class="preview-placeholder" v-else>
+        <el-icon :size="32"><ImageOutlined /></el-icon>
+        <span>No preview available</span>
+      </div>
+    </div>
+  </el-popover>
 </template>
 
 <script setup>
 import { ref, watchEffect, computed, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { BookmarkTwotone, Loading } from '@vicons/material'
+import { BookmarkTwotone, ImageOutlined, SyncOutlined } from '@vicons/material'
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '../pinia.js'
 
@@ -68,26 +89,6 @@ const getCoverUrl = (coverPath) => {
 }
 
 const ipcRenderer = window.ipcRenderer
-
-const generateCoverOnDemand = async (book) => {
-  if (!book.coverPath || book.coverPath === '') {
-    try {
-      const bookData = JSON.parse(JSON.stringify(book))
-      const coverInfo = await ipcRenderer.invoke('patch-local-metadata-by-book', bookData)
-      if (coverInfo && coverInfo.coverPath) {
-        book.coverPath = coverInfo.coverPath
-        book.hash = coverInfo.hash
-        book.pageCount = coverInfo.pageCount
-        book.bundleSize = coverInfo.bundleSize
-        book.mtime = coverInfo.mtime
-        book.coverHash = coverInfo.coverHash
-        await ipcRenderer.invoke('save-book', bookData)
-      }
-    } catch (e) {
-      console.log('Failed to generate cover:', e)
-    }
-  }
-}
 
 const emit = defineEmits([
   'openBookDetail',
@@ -115,19 +116,24 @@ const artistList = computed(() => {
   return all.slice(0, 2).join(', ') || null
 })
 
+const statusClass = computed(() => {
+  if (props.book.status === 'tagged') return 'status-tagged'
+  if (props.book.status === 'non-tag') return 'status-non-tag'
+  return 'status-failed'
+})
+
+// 预览功能 - 仅在悬浮 300ms 后加载
 const showPreview = ref(false)
 const previewImages = ref([])
 const loadingPreview = ref(false)
-const previewStyle = ref({})
 let previewTimeout = null
 let loadedBooks = new Set()
 
-const handleMouseEnter = (e) => {
+const handleMouseEnter = () => {
   previewTimeout = setTimeout(() => {
     showPreview.value = true
-    updatePreviewPosition(e)
     loadPreviewImages()
-  }, 500)
+  }, 300) // 300ms 延迟
 }
 
 const handleMouseLeave = () => {
@@ -138,16 +144,13 @@ const handleMouseLeave = () => {
   showPreview.value = false
 }
 
-const updatePreviewPosition = (e) => {
-  const x = e.clientX + 20
-  const y = e.clientY
-  previewStyle.value = {
-    left: `${Math.min(x, window.innerWidth - 350)}px`,
-    top: `${Math.min(y, window.innerHeight - 450)}px`,
-  }
-}
-
 const loadPreviewImages = async () => {
+  // 优先使用封面
+  if (props.book.coverPath) {
+    previewImages.value = []
+    return
+  }
+  
   if (loadedBooks.has(props.book.id)) {
     return
   }
@@ -155,14 +158,15 @@ const loadPreviewImages = async () => {
   loadingPreview.value = true
   
   try {
-    const { filepath, type } = props.book
-    const result = await ipcRenderer.invoke('get-preview-images', { filepath, type, count: 3 })
-    if (result && result.images) {
-      previewImages.value = result.images.map(img => 
-        img && !img.startsWith('file://') ? 'file://' + img.replace(/\\/g, '/') : img
-      )
-      loadedBooks.add(props.book.id)
+    // 先生成封面
+    const bookData = JSON.parse(JSON.stringify(props.book))
+    const coverInfo = await ipcRenderer.invoke('generate-cover-priority', bookData)
+    if (coverInfo && coverInfo.coverPath) {
+      props.book.coverPath = coverInfo.coverPath
+      props.book.hash = coverInfo.hash
+      props.book.pageCount = coverInfo.pageCount
     }
+    loadedBooks.add(props.book.id)
   } catch (e) {
     console.log('Failed to load preview:', e)
   }
@@ -194,12 +198,33 @@ onUnmounted(() => {
     align-items: center
     gap: 12px
   
-  .compact-cover
+  // 状态指示器替代缩略图
+  .compact-status-indicator
     width: 45px
     height: 64px
-    object-fit: cover
     border-radius: 3px
     flex-shrink: 0
+    display: flex
+    align-items: center
+    justify-content: center
+    font-size: 11px
+    font-weight: 600
+    
+    &.status-tagged
+      background: linear-gradient(135deg, #67c23a 0%, #85ce61 100%)
+      color: white
+    
+    &.status-non-tag
+      background: linear-gradient(135deg, #909399 0%, #b4b4b4 100%)
+      color: white
+    
+    &.status-failed
+      background: linear-gradient(135deg, #e6a23c 0%, #f0c78a 100%)
+      color: white
+    
+    .status-icon
+      text-align: center
+      line-height: 1.2
   
   .compact-info
     flex: 1
@@ -245,29 +270,49 @@ onUnmounted(() => {
       cursor: pointer
       margin-left: 4px
 
-.compact-preview
-  position: fixed
-  z-index: 9999
-  background: var(--el-bg-color)
-  border: 1px solid var(--el-border-color)
-  border-radius: 8px
-  padding: 8px
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3)
-  display: flex
-  gap: 4px
+// 预览 Popover 样式
+.compact-preview-popover
+  padding: 8px !important
   
-  .preview-image
-    width: 120px
-    height: 170px
-    object-fit: cover
-    border-radius: 4px
-  
-  .preview-loading
+  .preview-content
     display: flex
+    flex-direction: column
     align-items: center
-    justify-content: center
-    width: 120px
-    height: 170px
-    background: var(--el-fill-color-light)
-    border-radius: 4px
+    
+    .preview-loading
+      display: flex
+      flex-direction: column
+      align-items: center
+      gap: 8px
+      padding: 20px
+      color: var(--el-text-color-secondary)
+    
+    .preview-images
+      display: flex
+      gap: 4px
+      
+      .preview-image
+        width: 120px
+        height: 170px
+        background-size: cover
+        background-position: center
+        background-repeat: no-repeat
+        border-radius: 4px
+    
+    .preview-cover
+      .cover-image
+        width: 200px
+        height: 283px
+        background-size: cover
+        background-position: center
+        background-repeat: no-repeat
+        border-radius: 4px
+    
+    .preview-placeholder
+      display: flex
+      flex-direction: column
+      align-items: center
+      gap: 8px
+      padding: 20px
+      color: var(--el-text-color-secondary)
 </style>

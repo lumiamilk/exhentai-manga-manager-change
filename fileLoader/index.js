@@ -20,35 +20,61 @@ const getBookFilelist = async (library) => {
 }
 
 const geneCover = async (filepath, type) => {
+  // Create unique temp directory for this task to avoid EBUSY/ENOENT conflicts
+  const taskTempDir = path.join(TEMP_PATH, nanoid())
+  await fs.promises.mkdir(taskTempDir, { recursive: true })
+  
   let targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime
   switch (type) {
     case 'folder':
-      ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeFolder(filepath, TEMP_PATH, COVER_PATH))
+      ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeFolder(filepath, taskTempDir, COVER_PATH))
       break
     case 'zip':
       try {
-        ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeArchive(filepath, TEMP_PATH, COVER_PATH))
+        ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeArchive(filepath, taskTempDir, COVER_PATH))
       } catch (e) {
         console.log(e)
         console.log(`reload ${filepath} use adm-zip`)
-        ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeZip(filepath, TEMP_PATH, COVER_PATH))
+        ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeZip(filepath, taskTempDir, COVER_PATH))
       }
       break
     case 'archive':
-      ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeArchive(filepath, TEMP_PATH, COVER_PATH))
+      ;({ targetFilePath, coverPath, tempCoverPath, pageCount, bundleSize, mtime } = await solveBookTypeArchive(filepath, taskTempDir, COVER_PATH))
       break
   }
 
   const coverHash = createHash('sha1').update(fs.readFileSync(tempCoverPath)).digest('hex')
-  const copyTempCoverPath = path.join(TEMP_PATH, nanoid(8) + path.extname(tempCoverPath))
+  const copyTempCoverPath = path.join(taskTempDir, nanoid(8) + path.extname(tempCoverPath))
   await fs.promises.copyFile(tempCoverPath, copyTempCoverPath)
-  await sharp(copyTempCoverPath, { failOnError: false })
-    .resize(500, 707, {
-      fit: 'contain',
-      background: '#303133'
-    })
-    .toFile(coverPath)
-  return { targetFilePath, coverPath, pageCount, bundleSize, mtime, coverHash }
+  
+  // ENOENT prevention: Check if file exists before sharp processing
+  if (!fs.existsSync(copyTempCoverPath)) {
+    throw new Error(`Temp cover file not found: ${copyTempCoverPath}`)
+  }
+  
+  // Sharp .toFile with EBUSY retry mechanism for Windows
+  const maxRetries = 3
+  let retryCount = 0
+  while (retryCount < maxRetries) {
+    try {
+      await sharp(copyTempCoverPath, { failOnError: false })
+        .resize(500, 707, {
+          fit: 'contain',
+          background: '#303133'
+        })
+        .toFile(coverPath)
+      break // Success
+    } catch (e) {
+      retryCount++
+      if (e.code === 'EBUSY' && retryCount < maxRetries) {
+        await new Promise(resolve => setTimeout(resolve, 200 * retryCount))
+      } else {
+        throw e
+      }
+    }
+  }
+  
+  return { targetFilePath, coverPath, pageCount, bundleSize, mtime, coverHash, taskTempDir }
 }
 
 const getImageListByBook = async (filepath, type) => {

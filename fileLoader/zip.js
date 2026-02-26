@@ -17,7 +17,11 @@ const getZipFilelist = async (libraryPath) => {
 }
 
 const solveBookTypeZip = async (filepath, TEMP_PATH, COVER_PATH) => {
-  const tempFolder = path.join(TEMP_PATH, nanoid(8))
+  // Use the provided TEMP_PATH as the base directory (it's already a unique taskTempDir from geneCover)
+  // Create a unique subdirectory for extraction
+  const tempFolder = path.join(TEMP_PATH, 'extract_' + nanoid(8))
+  await fs.promises.mkdir(tempFolder, { recursive: true })
+  
   const zip = new AdmZip(filepath)
   const zipFileList = zip.getEntries()
   const findZFile = (entryName) => {
@@ -32,24 +36,39 @@ const solveBookTypeZip = async (filepath, TEMP_PATH, COVER_PATH) => {
   let coverFile
   let tempCoverPath
   let coverPath
+  
   if (imageList.length > 8) {
-    targetFile = imageList[7]
-    coverFile = imageList[0]
-    zip.extractEntryTo(findZFile(targetFile), tempFolder, true, true)
-    zip.extractEntryTo(findZFile(coverFile), tempFolder, true, true)
+    targetFile = imageList[7].trim()
+    coverFile = imageList[0].trim()
+    // extractEntryTo(zipEntry, targetPath, maintainEntryPath = false, overwrite = true)
+    // maintainEntryPath = false flattens the directory structure
+    zip.extractEntryTo(findZFile(targetFile), tempFolder, false, true)
+    zip.extractEntryTo(findZFile(coverFile), tempFolder, false, true)
   } else if (imageList.length > 0) {
-    targetFile = imageList[0]
-    coverFile = imageList[0]
-    zip.extractEntryTo(findZFile(targetFile), tempFolder, true, true)
+    targetFile = imageList[0].trim()
+    coverFile = imageList[0].trim()
+    // Flatten directory structure
+    zip.extractEntryTo(findZFile(targetFile), tempFolder, false, true)
   } else {
-    throw new Error('compression package isnot include image')
+    throw new Error('compression package is not include image')
   }
 
-  targetFilePath = path.join(TEMP_PATH, nanoid(8) + path.extname(targetFile))
-  await fs.promises.copyFile(path.join(tempFolder, targetFile), targetFilePath)
+  // With maintainEntryPath = false, files go directly to tempFolder root
+  // The filename is just the basename
+  const targetBasename = path.basename(targetFile)
+  const coverBasename = path.basename(coverFile)
+  
+  // Verify files exist
+  const filesInTemp = await fs.promises.readdir(tempFolder).catch(() => [])
+  const actualTargetFile = filesInTemp.find(f => path.extname(f).toLowerCase() === path.extname(targetFile).toLowerCase()) || targetBasename
+  const actualCoverFile = filesInTemp.find(f => path.extname(f).toLowerCase() === path.extname(coverFile).toLowerCase()) || coverBasename
 
-  tempCoverPath = path.join(TEMP_PATH, nanoid(8) + path.extname(imageList[0]))
-  await fs.promises.copyFile(path.join(tempFolder, imageList[0]), tempCoverPath)
+  // IMPORTANT: Write all temp files to tempFolder, NOT to TEMP_PATH
+  targetFilePath = path.join(tempFolder, 'target' + nanoid(8) + path.extname(actualTargetFile))
+  await fs.promises.copyFile(path.join(tempFolder, actualTargetFile), targetFilePath)
+
+  tempCoverPath = path.join(tempFolder, 'cover' + nanoid(8) + path.extname(actualCoverFile))
+  await fs.promises.copyFile(path.join(tempFolder, actualCoverFile), tempCoverPath)
 
   coverPath = path.join(COVER_PATH, nanoid() + '.webp')
 

@@ -21,6 +21,9 @@ const messages = {
 const app = createApp(App)
 
 window._ = _
+if (!window.ipcRenderer) {
+  window.ipcRenderer = { invoke: () => Promise.resolve(), on: () => {}, sendSync: () => null }
+}
 
 const pinia = createPinia()
 app.use(pinia)

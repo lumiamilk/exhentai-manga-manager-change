@@ -66,6 +66,7 @@ const prepareSetting = () => {
     skipDeleteConfirm: false,
     displayTitle: 'japaneseTitle',
     keepReadingProgress: true,
+    blockedArtists: [],
   }
   
   let setting

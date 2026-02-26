@@ -7,7 +7,8 @@
     >{{getDisplayTitle(book)}}</p>
     <img
       class="book-cover"
-      :src="book.coverPath"
+      :src="getCoverUrl(book.coverPath)"
+      @error="generateCoverOnDemand(book)"
       @click="$emit('handleClickCover')"
       @contextmenu="$emit('onBookContextMenu', $event, book)"
     />
@@ -49,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, watchEffect } from 'vue'
+import { ref, watchEffect, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { BookmarkTwotone } from '@vicons/material'
 import ContextMenu from '@imengyu/vue3-context-menu'
@@ -59,6 +60,7 @@ import { useAppStore } from '../pinia.js'
 const appStore = useAppStore()
 const { setting, resolvedTranslation } = storeToRefs(appStore)
 const { getDisplayTitle, isChineseTranslatedManga, saveBook, switchMark } = appStore
+const ipcRenderer = window.ipcRenderer || { invoke: () => Promise.resolve() }
 
 const { t } = useI18n()
 
@@ -75,6 +77,57 @@ const emit = defineEmits([
 const props = defineProps({
   book: Object
 })
+
+// VIEWPORT-FIRST: Generate cover on mount if missing
+onMounted(() => {
+  if (!props.book.coverPath || props.book.coverPath === '') {
+    generateCoverOnDemand(props.book)
+  }
+})
+
+const getCoverUrl = (coverPath) => {
+  if (!coverPath) return ''
+  if (coverPath.startsWith('file://')) return coverPath
+  return 'file://' + coverPath.replace(/\\/g, '/')
+}
+
+const generateCoverOnDemand = async (book) => {
+  // Use priority cover generation for viewport-first experience
+  if (!book.coverPath || book.coverPath === '') {
+    try {
+      // Create a snapshot to avoid reference issues
+      const bookSnapshot = JSON.parse(JSON.stringify(book))
+      
+      // Try priority cover generation first (Komga-style)
+      const coverInfo = await ipcRenderer.invoke('generate-cover-priority', bookSnapshot)
+      
+      if (coverInfo && coverInfo.coverPath) {
+        book.coverPath = coverInfo.coverPath
+        book.hash = coverInfo.hash
+        book.pageCount = coverInfo.pageCount
+        book.bundleSize = coverInfo.bundleSize
+        book.mtime = coverInfo.mtime
+        book.coverHash = coverInfo.coverHash
+      }
+    } catch (e) {
+      // Fallback to regular patch if priority fails
+      try {
+        const bookData = JSON.parse(JSON.stringify(book))
+        const coverInfo = await ipcRenderer.invoke('patch-local-metadata-by-book', bookData)
+        if (coverInfo && coverInfo.coverPath) {
+          book.coverPath = coverInfo.coverPath
+          book.hash = coverInfo.hash
+          book.pageCount = coverInfo.pageCount
+          book.bundleSize = coverInfo.bundleSize
+          book.mtime = coverInfo.mtime
+          book.coverHash = coverInfo.coverHash
+        }
+      } catch (fallbackError) {
+        // Silent fail - cover generation is not critical
+      }
+    }
+  }
+}
 
 const bookRating = ref(props.book.rating)
 

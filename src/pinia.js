@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { ElMessage } from 'element-plus'
 
+const ipcRenderer = window.ipcRenderer || { invoke: () => Promise.resolve(), on: () => {} }
+
 export const useAppStore = defineStore('appStore', {
   state: () => ({
     cat2letter: {
@@ -55,9 +57,20 @@ export const useAppStore = defineStore('appStore', {
     setting: {},
     bookDetail: {},
     resolvedTranslation: {},
+    // PAGINATION: bookList now holds only current page data (max ~200 items)
     bookList: [],
     displayBookList: [],
     chunkDisplayBookList: [],
+    // PAGINATION: total count from database
+    totalBookCount: 0,
+    // PAGINATION: current page state
+    pagination: {
+      page: 1,
+      pageSize: 200,
+      sortField: 'date',
+      sortOrder: 'DESC',
+      filters: {}
+    },
     collectionList: [],
     openCollectionBookList: [],
     serviceAvailable: true,
@@ -66,6 +79,8 @@ export const useAppStore = defineStore('appStore', {
     editTagView: false,
     localeFile: null,
     folderTreeData: [],
+    viewMode: 'card',
+    libraryList: [],
   }),
   getters: {
     cookie: (state) => {
@@ -84,10 +99,15 @@ export const useAppStore = defineStore('appStore', {
       const uniqedTagMap = new Map()
       state.bookList.filter(b => {
         return !b.hiddenBook && !b.folderHide
-      }).forEach(b => _.forEach(b.tags, (tags, cat) => {
-        const tagSet = uniqedTagMap.get(cat) || uniqedTagMap.set(cat, new Set()).get(cat)
-        tags.forEach(tag => tagSet.add(tag))
-      }))
+      }).forEach(b => {
+        // Defensive check: ensure tags is a valid object
+        if (!b.tags || typeof b.tags !== 'object' || Array.isArray(b.tags)) return
+        _.forEach(b.tags, (tags, cat) => {
+          if (!Array.isArray(tags)) return
+          const tagSet = uniqedTagMap.get(cat) || uniqedTagMap.set(cat, new Set()).get(cat)
+          tags.forEach(tag => tagSet.add(tag))
+        })
+      })
       const uniqedTagArray = _.flatMap(_.entries(uniqedTagMap), ([cat, tagSet]) => {
         return _.map([...tagSet], tag => `${cat}##${tag}`)
       }).sort()
@@ -108,7 +128,10 @@ export const useAppStore = defineStore('appStore', {
     },
     tagListRaw (state) {
       const tagArray = _(state.bookList.map(b => {
+        // Defensive check: ensure tags is a valid object
+        if (!b.tags || typeof b.tags !== 'object' || Array.isArray(b.tags)) return []
         return _.map(b.tags, (tags, cat) => {
+          if (!Array.isArray(tags)) return []
           return _.map(tags, tag => `${cat}##${tag}`)
         })
       }))
@@ -147,7 +170,10 @@ export const useAppStore = defineStore('appStore', {
     tag2cat (state) {
       const temp = {}
       const tagArray = _(state.bookList.map(b => {
+        // Defensive check: ensure tags is a valid object
+        if (!b.tags || typeof b.tags !== 'object' || Array.isArray(b.tags)) return []
         return _.map(b.tags, (tags, cat) => {
+          if (!Array.isArray(tags)) return []
           return _.map(tags, tag => `${cat}##${tag}`)
         })
       }))
@@ -164,7 +190,19 @@ export const useAppStore = defineStore('appStore', {
         .map(str => ({label: str.trim(), value: str.trim().replace(/\s+(?=(?:[^\'"]*[\'"][^\'"]*[\'"])*[^\'"]*$)/g, '|||')}))
     },
     visibleChunkDisplayBookList (state) {
-      return state.chunkDisplayBookList.filter(book => !book.collectionHide && (state.sortValue === 'hidden' || !book.hiddenBook) && !book.folderHide)
+      const blockedArtists = state.setting.blockedArtists || []
+      return state.chunkDisplayBookList.filter(book => {
+        if (book.collectionHide || book.folderHide) return false
+        if (state.sortValue !== 'hidden' && book.hiddenBook) return false
+        
+        // Filter by blocked artists: hide book only if ALL artists are blocked
+        if (blockedArtists.length > 0 && book.tags?.artist?.length > 0) {
+          const allArtistsBlocked = book.tags.artist.every(artist => blockedArtists.includes(artist))
+          if (allArtistsBlocked) return false
+        }
+        
+        return true
+      })
     },
     visibleChunkDisplayBookListForCollectView (state) {
       return state.chunkDisplayBookList.filter(book => !book.isCollection && !book.folderHide && !book.hiddenBook)
@@ -265,6 +303,92 @@ export const useAppStore = defineStore('appStore', {
       if (!keyword) return true
       const label = node.text || node.label || ''
       return label.toLowerCase().includes(keyword.toLowerCase())
+    },
+    async loadLibraryList () {
+      try {
+        const libraries = await ipcRenderer.invoke('get-libraries')
+        console.log('loadLibraryList result:', libraries)
+        this.libraryList = libraries || []
+        return this.libraryList
+      } catch (e) {
+        console.error('loadLibraryList error:', e)
+        this.libraryList = []
+        return []
+      }
+    },
+    async addLibrary (library) {
+      const result = await ipcRenderer.invoke('add-library', _.cloneDeep(library))
+      if (result.success && result.library) {
+        this.libraryList = [...this.libraryList, result.library]
+      }
+      return result
+    },
+    async updateLibrary (library) {
+      const result = await ipcRenderer.invoke('update-library', _.cloneDeep(library))
+      if (result.success) {
+        this.libraryList = this.libraryList.map(l => 
+          l.id === library.id ? { ...l, ...library } : l
+        )
+      }
+      return result
+    },
+    async deleteLibrary (libraryId) {
+      const result = await ipcRenderer.invoke('delete-library', libraryId)
+      if (result.success) {
+        this.libraryList = this.libraryList.filter(l => l.id !== libraryId)
+      }
+      return result
+    },
+    // PAGINATION: Load paged book list from backend
+    async loadBookListPaged (page = 1) {
+      try {
+        this.pagination.page = page
+        // IMPORTANT: Clone pagination values to avoid DataCloneError with Vue 3 Proxy objects
+        const paginationParams = JSON.parse(JSON.stringify({
+          page: this.pagination.page,
+          pageSize: this.pagination.pageSize,
+          sortField: this.pagination.sortField,
+          sortOrder: this.pagination.sortOrder,
+          filters: this.pagination.filters
+        }))
+        const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+        
+        if (result && result.data) {
+          // Prepare book list (add pageDiff flag)
+          result.data.forEach(book => {
+            if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
+              book.pageDiff = true
+            }
+          })
+          
+          this.bookList = result.data
+          this.displayBookList = result.data
+          this.totalBookCount = result.total
+          
+          console.log(`Loaded page ${result.page}/${result.totalPages}, total: ${result.total}`)
+        }
+        return result
+      } catch (e) {
+        console.error('loadBookListPaged error:', e)
+        return { data: [], total: 0, page: 1, pageSize: this.pagination.pageSize, totalPages: 0 }
+      }
+    },
+    // PAGINATION: Update pagination settings
+    setPagination (options) {
+      if (options.page !== undefined) this.pagination.page = options.page
+      if (options.pageSize !== undefined) this.pagination.pageSize = options.pageSize
+      if (options.sortField !== undefined) this.pagination.sortField = options.sortField
+      if (options.sortOrder !== undefined) this.pagination.sortOrder = options.sortOrder
+      if (options.filters !== undefined) this.pagination.filters = options.filters
+    },
+    // PAGINATION: Get total book count
+    async getBookCount (filters = {}) {
+      try {
+        return await ipcRenderer.invoke('get-book-count', filters)
+      } catch (e) {
+        console.error('getBookCount error:', e)
+        return 0
+      }
     },
   }
 })

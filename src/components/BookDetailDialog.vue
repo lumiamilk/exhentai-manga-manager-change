@@ -123,7 +123,9 @@
                     <el-tag
                       type="info"
                       class="book-tag"
+                      :class="{'blocked-tag': key === 'artist' && setting.blockedArtists?.includes(tag)}"
                       @click="$emit('searchFromTag', tag, key)"
+                      @contextmenu.prevent="onTagContextMenu($event, tag, key)"
                     >{{resolvedTranslation[tag] ? resolvedTranslation[tag].name : tag }}</el-tag>
                   </template>
                 </el-popover>
@@ -426,6 +428,58 @@ const onMangaTitleContextMenu = (e, book) => {
   })
 }
 
+const onTagContextMenu = (e, tag, key) => {
+  e.preventDefault()
+  const isBlocked = setting.value.blockedArtists?.includes(tag)
+  
+  if (key === 'artist') {
+    ContextMenu.showContextMenu({
+      x: e.x,
+      y: e.y,
+      items: [
+        {
+          label: isBlocked ? t('c.unblockArtist') : t('c.blockArtist'),
+          onClick: () => {
+            if (isBlocked) {
+              unblockArtist(tag)
+            } else {
+              blockArtist(tag)
+            }
+          }
+        },
+        {
+          label: t('c.searchFromTag'),
+          onClick: () => {
+            $emit('searchFromTag', tag, key)
+          }
+        }
+      ]
+    })
+  }
+}
+
+const blockArtist = (artist) => {
+  if (!setting.value.blockedArtists) {
+    setting.value.blockedArtists = []
+  }
+  if (!setting.value.blockedArtists.includes(artist)) {
+    setting.value.blockedArtists.push(artist)
+    ipcRenderer.invoke('save-setting', JSON.parse(JSON.stringify(setting.value)))
+    printMessage('success', t('c.artistBlocked'))
+  }
+}
+
+const unblockArtist = (artist) => {
+  if (setting.value.blockedArtists) {
+    const index = setting.value.blockedArtists.indexOf(artist)
+    if (index > -1) {
+      setting.value.blockedArtists.splice(index, 1)
+      ipcRenderer.invoke('save-setting', JSON.parse(JSON.stringify(setting.value)))
+      printMessage('success', t('c.artistUnblocked'))
+    }
+  }
+}
+
 const onMangaCommentContextMenu = (e, comment) => {
   e.preventDefault()
   const foundLink = comment.foundLink
@@ -540,6 +594,10 @@ defineExpose({
 .book-tag
   margin: 4px 6px
   cursor: pointer
+.blocked-tag
+  background-color: #f56c6c !important
+  border-color: #f56c6c !important
+  color: #fff !important
 .tag-edit-buttons
   margin-top: 4px
 .book-comment-frame

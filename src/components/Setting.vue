@@ -11,11 +11,40 @@
       <el-tab-pane :label="$t('m.general')" name="general">
         <el-row :gutter="8">
           <el-col :span="24">
-            <div class="setting-line">
-              <el-input v-model="setting.library">
-                <template #prepend><span class="setting-label">{{$t('m.library')}}</span></template>
-                <template #append><el-button @click="selectLibraryPath">{{$t('m.select')}}</el-button></template>
-              </el-input>
+            <div class="setting-line library-management">
+              <div class="library-header">
+                <span class="setting-label">{{$t('m.libraryManagement')}}</span>
+                <el-button type="primary" plain size="small" @click="openAddLibraryDialog">{{$t('m.addLibrary')}}</el-button>
+              </div>
+              <el-table :data="libraryList" size="small" style="width: 100%" v-if="libraryList.length > 0">
+                <el-table-column prop="name" :label="$t('m.libraryName')" min-width="100" />
+                <el-table-column prop="path" :label="$t('m.libraryPath')" min-width="200" show-overflow-tooltip />
+                <el-table-column :label="$t('m.scanOptions')" min-width="100">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.scanCbx" size="small" type="info" style="margin-right: 4px;">CBZ</el-tag>
+                    <el-tag v-if="row.scanPdf" size="small" type="info">PDF</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column :label="$t('m.enabled')" width="80">
+                  <template #default="{ row }">
+                    <el-switch 
+                      v-model="row.enabled" 
+                      @change="handleLibraryEnabledChange(row)"
+                      active-color="#13ce66"
+                      inactive-color="#ff4949"
+                    />
+                  </template>
+                </el-table-column>
+                <el-table-column :label="$t('m.action')" width="120" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openEditLibraryDialog(row)">{{$t('m.edit')}}</el-button>
+                    <el-button link type="danger" @click="handleDeleteLibrary(row)">{{$t('m.delete')}}</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div v-else class="no-library-tip">
+                {{$t('m.noLibraryTip')}}
+              </div>
             </div>
           </el-col>
           <el-col :span="24">
@@ -364,6 +393,11 @@
               <el-button class="function-button" type="primary" plain @click="importMetadataFromSqlite">{{$t('m.importMetadataFromSqlite')}}</el-button>
             </div>
           </el-col>
+          <el-col :span="5">
+            <div class="setting-line">
+              <el-button class="function-button" type="success" plain @click="importMetadataFromHitomi">{{$t('m.importMetadataFromHitomi')}}</el-button>
+            </div>
+          </el-col>
         </el-row>
         <el-row :gutter="8">
           <el-col :span="6" class="setting-switch">
@@ -451,6 +485,31 @@
             />
           </el-col>
         </el-row>
+        <el-row :gutter="8" style="margin-top: 16px;">
+          <el-col :span="24">
+            <div class="setting-line blocked-artists-section">
+              <div class="blocked-artists-header">
+                <span class="setting-label">{{$t('m.blockedArtists')}}</span>
+              </div>
+              <p class="blocked-artists-info">{{$t('m.blockedArtistsInfo')}}</p>
+              <div v-if="setting.blockedArtists && setting.blockedArtists.length > 0" class="blocked-artists-list">
+                <el-tag
+                  v-for="artist in setting.blockedArtists"
+                  :key="artist"
+                  closable
+                  type="danger"
+                  class="blocked-artist-tag"
+                  @close="unblockArtist(artist)"
+                >
+                  {{ artist }}
+                </el-tag>
+              </div>
+              <div v-else class="no-blocked-artists">
+                {{$t('m.noBlockedArtists')}}
+              </div>
+            </div>
+          </el-col>
+        </el-row>
       </el-tab-pane>
       <el-tab-pane :label="$t('m.accelerator')" name="accelerator">
         <el-descriptions
@@ -493,6 +552,32 @@
       </el-tab-pane>
     </el-tabs>
   </el-dialog>
+
+  <el-dialog v-model="dialogVisibleLibrary" :title="libraryDialogTitle" width="500px">
+    <el-form :model="libraryForm" label-width="100px">
+      <el-form-item :label="$t('m.libraryName')">
+        <el-input v-model="libraryForm.name" />
+      </el-form-item>
+      <el-form-item :label="$t('m.libraryPath')">
+        <el-input v-model="libraryForm.path">
+          <template #append>
+            <el-button @click="selectLibraryFolder">{{$t('m.select')}}</el-button>
+          </template>
+        </el-input>
+      </el-form-item>
+      <el-form-item :label="$t('m.scanOptions')">
+        <el-checkbox v-model="libraryForm.scanCbx">CBZ</el-checkbox>
+        <el-checkbox v-model="libraryForm.scanPdf">PDF</el-checkbox>
+      </el-form-item>
+      <el-form-item :label="$t('m.enabled')">
+        <el-switch v-model="libraryForm.enabled" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="dialogVisibleLibrary = false">{{$t('m.cancel')}}</el-button>
+      <el-button type="primary" @click="saveLibrary">{{$t('m.save')}}</el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -513,8 +598,9 @@ import NameFormItem from './NameFormItem.vue'
 
 import { storeToRefs } from 'pinia'
 import { useAppStore } from '../pinia.js'
+const ipcRenderer = window.ipcRenderer || { invoke: () => Promise.resolve(), on: () => {} }
 const appStore = useAppStore()
-const { searchTypeList, setting, bookList, resolvedTranslation, localeFile, tagListRaw } = storeToRefs(appStore)
+const { searchTypeList, setting, bookList, resolvedTranslation, localeFile, tagListRaw, libraryList } = storeToRefs(appStore)
 const { printMessage } = appStore
 
 const { t, locale } = useI18n()
@@ -524,7 +610,90 @@ const emit = defineEmits([
   'loadCollectionList',
 ])
 
+const dialogVisibleLibrary = ref(false)
+const libraryDialogTitle = ref('')
+const libraryForm = ref({
+  name: '',
+  path: '',
+  scanCbx: true,
+  scanPdf: false,
+  enabled: true
+})
+
+const openAddLibraryDialog = () => {
+  libraryDialogTitle.value = t('m.addLibrary')
+  libraryForm.value = {
+    name: '',
+    path: '',
+    scanCbx: true,
+    scanPdf: false,
+    enabled: true
+  }
+  dialogVisibleLibrary.value = true
+}
+
+const openEditLibraryDialog = (library) => {
+  libraryDialogTitle.value = t('m.editLibrary')
+  libraryForm.value = { ...library }
+  dialogVisibleLibrary.value = true
+}
+
+const selectLibraryFolder = async () => {
+  const res = await ipcRenderer.invoke('select-folder', t('m.libraryPath'))
+  if (res) {
+    libraryForm.value.path = res
+  }
+}
+
+const saveLibrary = async () => {
+  if (!libraryForm.value.name || !libraryForm.value.path) {
+    printMessage('warning', t('m.libraryNamePathRequired'))
+    return
+  }
+  let result
+  if (libraryForm.value.id) {
+    result = await appStore.updateLibrary(libraryForm.value)
+  } else {
+    result = await appStore.addLibrary(libraryForm.value)
+  }
+  if (result.success) {
+    printMessage('success', libraryForm.value.id ? t('m.libraryUpdated') : t('m.libraryAdded'))
+    dialogVisibleLibrary.value = false
+  } else {
+    printMessage('error', result.message || t('m.libraryOperationFailed'))
+  }
+}
+
+const handleLibraryEnabledChange = async (library) => {
+  const newEnabled = library.enabled
+  const result = await appStore.updateLibrary(library)
+  if (result.success) {
+    printMessage('success', newEnabled ? t('m.libraryEnabled') : t('m.libraryDisabled'))
+  } else {
+    printMessage('error', result.message || t('m.libraryOperationFailed'))
+  }
+}
+
+const handleDeleteLibrary = async (library) => {
+  try {
+    await ElMessageBox.confirm(
+      t('m.confirmDeleteLibrary', { name: library.name }),
+      t('m.warning'),
+      { confirmButtonText: t('m.confirm'), cancelButtonText: t('m.cancel'), type: 'warning' }
+    )
+    const result = await appStore.deleteLibrary(library.id)
+    if (result.success) {
+      printMessage('success', t('m.libraryDeleted'))
+    } else {
+      printMessage('error', result.message || t('m.libraryOperationFailed'))
+    }
+  } catch (e) {
+    printMessage('info', t('m.canceled'))
+  }
+}
+
 onMounted(() => {
+  appStore.loadLibraryList()
   ipcRenderer.invoke('load-setting')
     .then(async (res) => {
       setting.value = res
@@ -711,6 +880,16 @@ const saveSetting = () => {
   ipcRenderer.invoke('save-setting', _.cloneDeep(setting.value))
 }
 
+const unblockArtist = (artist) => {
+  if (setting.value.blockedArtists) {
+    const index = setting.value.blockedArtists.indexOf(artist)
+    if (index > -1) {
+      setting.value.blockedArtists.splice(index, 1)
+      saveSetting()
+    }
+  }
+}
+
 const openLink = (link) => {
   ipcRenderer.invoke('open-url', link)
 }
@@ -747,6 +926,16 @@ const importMetadataFromSqlite = async () => {
     printMessage('success', t('c.importMessage'))
   } else {
     printMessage('info', t('c.canceled'))
+  }
+}
+
+const importMetadataFromHitomi = async () => {
+  const {success, matchedCount, bookList: updatedBookList, message} = await ipcRenderer.invoke('import-from-hitomi', _.cloneDeep(bookList.value))
+  if (success) {
+    bookList.value = updatedBookList
+    printMessage('success', `从 Hitomi 导入完成，匹配 ${matchedCount} 本漫画`)
+  } else {
+    printMessage('info', message || t('c.canceled'))
   }
 }
 
@@ -841,6 +1030,23 @@ defineExpose({
     margin-right: 8px
     margin-bottom: 8px
     border-width: 0
+.blocked-artists-section
+  margin-top: 12px
+.blocked-artists-header
+  margin-bottom: 8px
+.blocked-artists-info
+  color: var(--el-text-color-secondary)
+  font-size: 12px
+  margin: 0 0 12px 0
+.blocked-artists-list
+  display: flex
+  flex-wrap: wrap
+  gap: 8px
+.blocked-artist-tag
+  margin: 0
+.no-blocked-artists
+  color: var(--el-text-color-placeholder)
+  font-size: 13px
 .setting-switch
   text-align: left
   margin-top: 6px
