@@ -23,6 +23,7 @@
     </div>
   </el-col>
   <el-col :span="4" v-if="editCollectionView" class="book-collection">
+    <el-button type="primary" plain @click="exitCollectionView" style="width: 100%; margin-bottom: 12px;">{{$t('m.exit')}}</el-button>
     <el-select v-model="selectCollection" class="book-collection-select" filterable @change="handleSelectCollectionChange">
       <el-option v-for="collection in collectionList" :key="collection.id" :value="collection.id" :label="collection.title"></el-option>
     </el-select>
@@ -89,6 +90,7 @@
     </div>
   </el-col>
   <el-col :span="4" v-if="editTagView" class="book-tag-edit-operation" v-loading="updateTagsLoading">
+    <el-button type="primary" plain @click="exitEditTagView" style="width: 100%; margin-bottom: 12px;">{{$t('m.exit')}}</el-button>
     <el-space wrap class="book-tag-edit-buttons">
       <el-button type="primary" plain @click="selectAllForGroupTag">{{$t('m.selectAll')}}</el-button>
       <el-button type="primary" plain @click="unselectAllForGroupTag">{{$t('m.unselectAll')}}</el-button>
