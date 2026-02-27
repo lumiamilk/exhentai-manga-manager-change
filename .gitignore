@@ -33,3 +33,7 @@ ForAI.md
 ai-safe-workflow.ps1
 bug.txt
 other_code/
+# except manga-image-translator
+!other_code/manga-image-translator/
+other_code/manga-image-translator/.venv
+other_code/manga-image-translator/result
