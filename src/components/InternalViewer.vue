@@ -55,7 +55,7 @@
               >
                 <img
                   v-if="loadedImages[image.id]"
-                  :src="`${image.filepath}?id=${image.id}`"
+                  :src="getImageDisplayPath(image)"
                   class="viewer-image"
                   :style="{height: returnImageStyle(image).height}"
                   @contextmenu="onMangaImageContextMenu($event, image)"
@@ -64,6 +64,11 @@
                   <el-icon class="is-loading"><Loading /></el-icon>
                 </div>
                 <div class="viewer-image-bar" @mousedown="initResize(image.id, image.width)"></div>
+                <!-- 翻译中指示器 -->
+                <div v-if="translatingImages[image.id]" class="translating-indicator">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>翻译中...</span>
+                </div>
               </div>
               <div class="viewer-image-page" v-if="!setting.hidePageNumber">{{index + 1}} of {{viewerImageList.length}}</div>
             </div>
@@ -72,20 +77,25 @@
             <div class="image-frame">
               <div class="viewer-image-frame"  :style="returnImageStyle(viewerImageList[currentImageIndex])" v-if="viewerImageList.length > 0">
                 <img
-                  :src="`${viewerImageList[currentImageIndex]?.filepath}?id=${viewerImageList[currentImageIndex]?.id}`"
+                  :src="getImageDisplayPath(viewerImageList[currentImageIndex])"
                   class="viewer-image"
                   :style="{height: returnImageStyle(viewerImageList[currentImageIndex])?.height}"
                   @contextmenu="onMangaImageContextMenu($event, viewerImageList[currentImageIndex])"
                 />
+                <!-- 翻译中指示器 -->
+                <div v-if="translatingImages[viewerImageList[currentImageIndex]?.id]" class="translating-indicator">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>翻译中...</span>
+                </div>
               </div>
               <div class="viewer-image-page" v-if="!setting.hidePageNumber">{{currentImageIndex + 1}} of {{viewerImageList.length}}</div>
               <img
-                :src="`${viewerImageList[currentImageIndex - 1]?.filepath}?id=${viewerImageList[currentImageIndex - 1]?.id}`"
+                :src="getImageDisplayPath(viewerImageList[currentImageIndex - 1])"
                 class="viewer-image-preload"
                 v-if="currentImageIndex > 1"
               />
               <img
-                :src="`${viewerImageList[currentImageIndex + 1]?.filepath}?id=${viewerImageList[currentImageIndex + 1]?.id}`"
+                :src="getImageDisplayPath(viewerImageList[currentImageIndex + 1])"
                 class="viewer-image-preload"
                 v-if="currentImageIndex < viewerImageList.length - 1"
               />
@@ -97,7 +107,7 @@
                 <img
                   v-for="image in viewerImageListDouble[currentImageIndex]?.page"
                   :key="image.id"
-                  :src="`${image.filepath}?id=${image.id}`"
+                  :src="getImageDisplayPath(image)"
                   class="viewer-image"
                   :style="{height: returnImageStyle(image).height}"
                   @contextmenu="onMangaImageContextMenu($event, image)"
@@ -106,14 +116,14 @@
               <div v-if="currentImageIndex > 1">
                 <img
                   v-for="image in viewerImageListDouble[currentImageIndex - 1]?.page" :key="image.id"
-                  :src="`${image.filepath}?id=${image.id}`"
+                  :src="getImageDisplayPath(image)"
                   class="viewer-image-preload"
                 />
               </div>
               <div v-if="currentImageIndex < viewerImageListDouble.length - 1">
                 <img
                   v-for="image in viewerImageListDouble[currentImageIndex + 1]?.page" :key="image.id"
-                  :src="`${image.filepath}?id=${image.id}`"
+                  :src="getImageDisplayPath(image)"
                   class="viewer-image-preload"
                 />
               </div>
@@ -137,6 +147,11 @@
           </el-space>
         </div>
         <el-button class="viewer-close-button" link text :icon="Close" size="large" @click="drawerVisibleViewer = false"></el-button>
+        <!-- 翻译服务加载提示 -->
+        <div v-if="showTranslationLoadingTip" class="translation-loading-tip">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span>正在加载漫画翻译服务，等待...</span>
+        </div>
         <div class="viewer-mode-setting">
           <el-select
             v-model="showThumbnail"
@@ -277,6 +292,264 @@ const currentImageId = ref('')
 const insertEmptyPage = ref(true)
 const insertEmptyPageIndex = ref(0)
 const viewerImageList = ref([])
+
+// 翻译相关状态
+const translatedImages = ref({})  // 存储翻译后的图片 { imageId: base64Data }
+const translatingImages = ref({}) // 正在翻译的图片 { imageId: true }
+const isPreTranslating = ref(false)  // 是否正在预翻译
+const pendingAutoTranslate = ref(false)  // 等待图片加载完成后启动预翻译
+const pendingOCRDetect = ref(false)  // 是否需要进行 OCR 检测
+let cancelTranslation = false  // 取消翻译标志
+const translationServiceReady = ref(false)  // 翻译服务是否就绪
+const showTranslationLoadingTip = ref(false)  // 显示翻译服务加载提示
+
+// 检查书籍是否需要翻译（日语漫画）- 通过 language 标签或标题判断
+const isJapaneseBook = (book) => {
+  if (!book || !book.tags) return false
+  const tags = book.tags
+  // 检查 language 标签是否包含 japanese
+  if (tags.language && Array.isArray(tags.language)) {
+    const hasJapanese = tags.language.some(lang => 
+      lang.toLowerCase().includes('japanese')
+    )
+    if (hasJapanese) return true
+  }
+  
+  // 备用判断：如果 tags 没有 language，检查 title_jpn 是否包含日文字符
+  if (book.title_jpn) {
+    const japaneseRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/
+    if (japaneseRegex.test(book.title_jpn)) {
+      return true
+    }
+  }
+  
+  // 再备用：检查 title 是否包含大量日文字符（说明是日语漫画）
+  if (book.title) {
+    const japaneseChars = book.title.match(/[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]/g)
+    if (japaneseChars && japaneseChars.length >= 3) {
+      return true
+    }
+  }
+  
+  return false
+}
+
+// 检查翻译服务是否就绪
+const checkTranslationServiceReady = async () => {
+  try {
+    const status = await ipcRenderer.invoke('get-translation-service-status')
+    return status?.isRunning === true
+  } catch {
+    return false
+  }
+}
+
+// 翻译单张图片（带重试机制）
+const translateImage = async (image, retryCount = 0) => {
+  const maxRetries = 3
+  const retryDelay = 2000  // 重试间隔 2 秒
+  
+  if (!image || !image.filepath) return null
+  if (cancelTranslation) return null  // 已取消
+  if (translatedImages.value[image.id]) {
+    return translatedImages.value[image.id]  // 已翻译，返回缓存
+  }
+  if (translatingImages.value[image.id]) {
+    return null  // 正在翻译中
+  }
+  
+  translatingImages.value[image.id] = true
+  
+  try {
+    console.log(`[翻译] 发送翻译请求 (${retryCount > 0 ? '重试 ' + retryCount : '首次'}): ${image.filepath}`)
+    const result = await ipcRenderer.invoke('translate-image', { 
+      imagePath: image.filepath 
+    })
+    
+    // 翻译完成后再次检查是否已取消
+    if (cancelTranslation) {
+      console.log(`[翻译] 翻译完成但已取消: ${image.filepath}`)
+      return null
+    }
+    
+    if (result.success) {
+      console.log(`[翻译] 翻译成功: ${image.filepath}`)
+      translatedImages.value[image.id] = result.data
+      return result.data
+    } else {
+      console.error(`[翻译] 翻译失败 (尝试 ${retryCount + 1}/${maxRetries + 1}):`, result.error)
+      
+      // 如果还有重试次数，等待后重试
+      if (retryCount < maxRetries) {
+        translatingImages.value[image.id] = false
+        await new Promise(resolve => setTimeout(resolve, retryDelay))
+        return translateImage(image, retryCount + 1)
+      } else {
+        console.error(`[翻译] 翻译失败，已达最大重试次数，跳过: ${image.filepath}`)
+        return null
+      }
+    }
+  } catch (err) {
+    console.error(`[翻译] 翻译异常 (尝试 ${retryCount + 1}/${maxRetries + 1}):`, err)
+    
+    // 如果还有重试次数，等待后重试
+    if (retryCount < maxRetries) {
+      translatingImages.value[image.id] = false
+      await new Promise(resolve => setTimeout(resolve, retryDelay))
+      return translateImage(image, retryCount + 1)
+    } else {
+      console.error(`[翻译] 翻译异常，已达最大重试次数，跳过: ${image.filepath}`)
+      return null
+    }
+  } finally {
+    translatingImages.value[image.id] = false
+  }
+}
+
+// 预翻译 - 优先翻译当前阅读页面，然后翻译其他页面
+const startPreTranslation = async () => {
+  // 如果正在翻译，先取消之前的翻译
+  if (isPreTranslating.value) {
+    console.log('[翻译] 取消之前的翻译任务')
+    cancelTranslation = true
+    // 等待之前的翻译任务停止
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  
+  // 检查设置是否启用翻译
+  if (!setting.value.translation?.enabled) {
+    return
+  }
+  
+  // 先检查翻译服务是否就绪
+  const isReady = await checkTranslationServiceReady()
+  
+  if (!isReady) {
+    console.log('[翻译] 翻译服务未就绪，等待服务启动...')
+    showTranslationLoadingTip.value = true
+    translationServiceReady.value = false
+    return
+  }
+  
+  // 如果需要 OCR 检测，先检测中间几页是否有日文
+  if (pendingOCRDetect.value) {
+    pendingOCRDetect.value = false
+    
+    const totalImages = viewerImageList.value.length
+    if (totalImages === 0) {
+      pendingAutoTranslate.value = false
+      return
+    }
+    
+    // 检测中间几张图片
+    const testIndices = []
+    if (totalImages >= 3) {
+      testIndices.push(Math.floor(totalImages / 2))
+    }
+    if (totalImages >= 5) {
+      testIndices.push(Math.floor(totalImages * 0.25))
+      testIndices.push(Math.floor(totalImages * 0.75))
+    }
+    
+    let hasJapanese = false
+    for (const idx of testIndices) {
+      const image = viewerImageList.value[idx]
+      if (image && image.filepath) {
+        try {
+          const result = await ipcRenderer.invoke('detect-image-language', { 
+            imagePath: image.filepath 
+          })
+          if (result?.hasJapanese) {
+            hasJapanese = true
+            break
+          }
+        } catch (err) {
+          console.log('[翻译] OCR 检测失败:', err)
+        }
+      }
+    }
+    
+    if (!hasJapanese) {
+      console.log('[翻译] 未检测到日文，取消自动翻译')
+      pendingAutoTranslate.value = false
+      return
+    }
+  }
+  
+  // 重置取消标志，开始新的翻译任务
+  cancelTranslation = false
+  translationServiceReady.value = true
+  showTranslationLoadingTip.value = false
+  isPreTranslating.value = true
+  
+  const totalImages = viewerImageList.value.length
+  if (totalImages === 0) {
+    isPreTranslating.value = false
+    return
+  }
+  
+  // 获取当前阅读页面的索引
+  const currentIdx = currentImageIndex.value
+  console.log(`[翻译] 开始预翻译，共 ${totalImages} 张图片，当前页: ${currentIdx + 1}`)
+  
+  // 构建翻译优先级队列：先翻译当前页面附近的，再翻译其他页面
+  const translateOrder = []
+  const added = new Set()
+  
+  // 辅助函数：添加到翻译队列
+  const addToQueue = (idx) => {
+    if (idx >= 0 && idx < totalImages && !added.has(idx)) {
+      translateOrder.push(idx)
+      added.add(idx)
+    }
+  }
+  
+  // 1. 最高优先级：当前页的前一页和当前页
+  addToQueue(currentIdx - 1)
+  addToQueue(currentIdx)
+  
+  // 2. 高优先级：当前页后面的几页
+  for (let offset = 1; offset <= 5; offset++) {
+    addToQueue(currentIdx + offset)
+  }
+  
+  // 3. 添加剩余页面（从头到尾）
+  for (let i = 0; i < totalImages; i++) {
+    addToQueue(i)
+  }
+  
+  // 按优先级顺序翻译
+  for (const i of translateOrder) {
+    // 检查是否被取消
+    if (cancelTranslation) {
+      isPreTranslating.value = false
+      return
+    }
+    
+    // 检查是否还在阅读这本漫画（如果关闭阅读器则停止）
+    if (!drawerVisibleViewer.value) {
+      break
+    }
+    
+    const image = viewerImageList.value[i]
+    if (image && !translatedImages.value[image.id] && !translatingImages.value[image.id]) {
+      await translateImage(image)
+    }
+  }
+  
+  isPreTranslating.value = false
+}
+
+// 获取图片显示路径（原图或翻译图）
+const getImageDisplayPath = (image) => {
+  // 检查设置是否启用翻译且有翻译结果
+  if (setting.value.translation?.enabled && translatedImages.value[image.id]) {
+    // 返回翻译后的图片 (data URL)
+    return `data:image/jpeg;base64,${translatedImages.value[image.id]}`
+  }
+  return `${image.filepath}?id=${image.id}`
+}
+
 const viewerImageListDouble = computed(() => {
   if (imageStyleType.value === 'double') {
     const result = []
@@ -368,6 +641,12 @@ onMounted(() => {
         })
       }
       viewerLoading?.close()
+      
+      // 图片加载完成后，启动预翻译（如果需要）
+      if (pendingAutoTranslate.value) {
+        pendingAutoTranslate.value = false
+        nextTick(() => startPreTranslation())
+      }
     }
   })
 
@@ -383,6 +662,25 @@ onMounted(() => {
     }
   })
 
+  // 监听翻译服务状态变化
+  ipcRenderer.on('translation-service-status', (event, status) => {
+    // 当翻译服务就绪时，检查是否需要开始翻译
+    if (status.type === 'success' && status.message?.includes('就绪')) {
+      translationServiceReady.value = true
+      
+      // 如果正在阅读日语漫画且显示了等待提示
+      if (showTranslationLoadingTip.value && drawerVisibleViewer.value) {
+        showTranslationLoadingTip.value = false
+        nextTick(() => startPreTranslation())
+      }
+      
+      // 额外检查：如果翻译服务就绪时 pendingAutoTranslate 为 true，说明服务在打开漫画前就就绪了
+      if (pendingAutoTranslate.value && drawerVisibleViewer.value) {
+        nextTick(() => startPreTranslation())
+      }
+    }
+  })
+
   showViewerSide.value = localStorage.getItem('showViewerSide') === 'true'
 
   window.addEventListener('resize', handleWindowResize)
@@ -390,6 +688,8 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleWindowResize)
+  // 移除翻译服务状态监听
+  ipcRenderer.removeAllListeners('translation-service-status')
 })
 const handleWindowResize = _.debounce(() => {
   updateImageSize()
@@ -400,6 +700,10 @@ const readyDestroyViewer = ref(false)
 
 let viewerLoading = null
 const viewManga = (book, viewerHeight = '100%') => {
+  // 取消之前的翻译任务并清空队列
+  cancelTranslation = true
+  ipcRenderer.invoke('clear-translation-queue')
+  
   readyDestroyViewer.value = false
   drawerHeight.value = viewerHeight
   viewerImageList.value = []
@@ -410,6 +714,30 @@ const viewManga = (book, viewerHeight = '100%') => {
   insertEmptyPage.value = setting.value.defaultInsertEmptyPage
   insertEmptyPageIndex.value = 0
   bookDetail.value = book
+  
+  // 重置翻译状态
+  translatedImages.value = {}
+  translatingImages.value = {}
+  isPreTranslating.value = false
+  pendingAutoTranslate.value = false
+  pendingOCRDetect.value = false
+  showTranslationLoadingTip.value = false
+  cancelTranslation = false  // 重置取消标志
+  
+  // 检查是否需要自动翻译（设置启用 + 日语漫画）
+  const isJapanese = isJapaneseBook(book)
+  
+  // 如果通过 tags 判断不是日语漫画，尝试 OCR 检测
+  let ocrPending = false
+  if (setting.value.translation?.enabled && !isJapanese) {
+    ocrPending = true
+    pendingOCRDetect.value = true
+  }
+  
+  if (setting.value.translation?.enabled && (isJapanese || ocrPending)) {
+    pendingAutoTranslate.value = true
+  }
+  
   viewerLoading = ElLoading.service({
     lock: true,
     text: 'Loading',
@@ -1036,6 +1364,33 @@ defineExpose({
       width: 32px
 .viewer-close-button:hover
   color: var(--el-color-primary) !important
+
+.translation-loading-tip
+  position: absolute
+  top: 80px
+  right: 25px
+  background: rgba(0, 0, 0, 0.8)
+  color: #fff
+  padding: 12px 20px
+  border-radius: 8px
+  display: flex
+  align-items: center
+  gap: 8px
+  z-index: 100
+  font-size: 14px
+
+.translating-indicator
+  position: absolute
+  top: 10px
+  right: 10px
+  background: rgba(0, 0, 0, 0.7)
+  color: #fff
+  padding: 6px 12px
+  border-radius: 4px
+  display: flex
+  align-items: center
+  gap: 6px
+  font-size: 12px
 
 .viewer-mode-setting
   opacity: 0.7

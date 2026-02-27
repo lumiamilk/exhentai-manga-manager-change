@@ -429,13 +429,16 @@ app.on('ready', async () => {
 })
 
 app.on('window-all-closed', () => {
+  // 停止翻译服务，释放显存
+  translationService.stopAll()
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
-process.on('exit', () => {
-  app.quit()
+// 确保应用退出时停止服务
+app.on('before-quit', () => {
+  translationService.stopAll()
 })
 
 // base function
@@ -548,11 +551,35 @@ const setProgressBar = (progress) => {
 }
 
 const clearFolder = async (Folder) => {
+  console.log(`[清理] 开始清空目录: ${Folder}`)
   try {
-    await fs.promises.rm(Folder, { recursive: true, force: true })
-    await fs.promises.mkdir(Folder, { recursive: true })
+    // 先尝试删除目录内容，逐个删除文件以处理被占用的文件
+    const entries = await fs.promises.readdir(Folder, { withFileTypes: true }).catch(() => [])
+    let deletedCount = 0
+    let skippedCount = 0
+    for (const entry of entries) {
+      const fullPath = path.join(Folder, entry.name)
+      try {
+        if (entry.isDirectory()) {
+          await clearFolder(fullPath)
+          await fs.promises.rmdir(fullPath).catch(() => {})
+          deletedCount++
+        } else {
+          await fs.promises.unlink(fullPath)
+          deletedCount++
+        }
+      } catch (err) {
+        // 忽略 EBUSY 和 EPERM 错误（文件被占用或权限问题）
+        if (err.code !== 'EBUSY' && err.code !== 'EPERM') {
+          console.log(`[清理] 删除文件失败: ${fullPath}`, err.message)
+        } else {
+          skippedCount++
+        }
+      }
+    }
+    console.log(`[清理] 清空目录完成: ${Folder}, 已删除 ${deletedCount} 个, 跳过 ${skippedCount} 个`)
   } catch (err) {
-    console.log(err)
+    console.log(`[清理] 清空目录出错: ${Folder}`, err.message)
   }
 }
 
@@ -1701,10 +1728,19 @@ ipcMain.handle('move-local-book', async (event, oldPath, folderArr) => {
 
 // viewer
 ipcMain.handle('load-manga-image-list', async (event, book) => {
+  // 先释放之前的图片发送锁，停止之前的发送进程
+  console.log(`[viewer] 切换漫画，释放图片发送锁，准备清空缓存: ${book.title || book.id}`)
+  sendImageLock = false
+  // 等待一小段时间让之前的操作完成
+  await new Promise(resolve => setTimeout(resolve, 300))
+  
+  console.log(`[viewer] 清空缓存目录: ${VIEWER_PATH}`)
   await clearFolder(VIEWER_PATH)
+  console.log(`[viewer] 缓存目录已清空`)
 
   const { filepath, type, id: bookId } = book
   const list = await getImageListByBook(filepath, type)
+  console.log(`[viewer] 获取到 ${list.length} 张图片`)
 
   sendImageLock = true
   ;(async () => {
@@ -2733,4 +2769,283 @@ const enableLANBrowsing = () => {
 
 ipcMain.handle('enable-LAN-browsing', async (event, arg) => {
   enableLANBrowsing()
+})
+
+// ============================================================================
+// TRANSLATION SERVICE
+// ============================================================================
+const TranslationService = require('./modules/translationService.js')
+const translationService = new TranslationService()
+
+// 设置翻译服务状态回调
+translationService.setStatusCallback((status) => {
+  sendMessageToWebContents(`[翻译服务] ${status.message}`)
+  mainWindow?.webContents.send('translation-service-status', status)
+})
+
+// 启动翻译服务
+ipcMain.handle('start-translation-service', async (event) => {
+  const translationConfig = setting.translation || {}
+  return await translationService.startAll(translationConfig)
+})
+
+// 停止翻译服务
+ipcMain.handle('stop-translation-service', async (event) => {
+  translationService.stopAll()
+  return true
+})
+
+// 获取翻译服务状态
+ipcMain.handle('get-translation-service-status', async (event) => {
+  const status = await translationService.getStatus()
+  return status
+})
+
+// 清空翻译队列
+ipcMain.handle('clear-translation-queue', async (event) => {
+  const translationConfig = setting.translation || {}
+  const port = translationConfig.mangaTranslatorPort || 5000
+  
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/cancel-all`, {
+      method: 'POST'
+    })
+    return response.ok
+  } catch (err) {
+    return false
+  }
+})
+
+// 翻译单张图片 (使用旧版 manga-image-translator API)
+ipcMain.handle('translate-image', async (event, { imagePath, config }) => {
+  const translationConfig = setting.translation || {}
+  const port = translationConfig.mangaTranslatorPort || 5000
+  const targetLang = translationConfig.targetLang || 'CHS'
+  
+  try {
+    const FormData = require('form-data')
+    const formData = new FormData()
+    
+    // 读取图片文件
+    const imageBuffer = await fs.promises.readFile(imagePath)
+    formData.append('file', imageBuffer, { filename: 'image.png', contentType: 'image/png' })
+    formData.append('tgt_lang', targetLang)
+    formData.append('translator', 'gpt4')  // 使用 gpt4 连接本地 llama-server
+    formData.append('detector', 'default')
+    
+    // 提交翻译任务
+    const submitResponse = await fetch(`http://127.0.0.1:${port}/run`, {
+      method: 'POST',
+      body: formData,
+      headers: formData.getHeaders()
+    })
+    
+    if (!submitResponse.ok) {
+      throw new Error(`Submit translation failed: ${submitResponse.statusText}`)
+    }
+    
+    const submitResult = await submitResponse.json()
+    const taskId = submitResult.task_id
+    
+    if (!taskId) {
+      throw new Error('No task_id returned')
+    }
+    
+    // 如果返回 successful 状态，说明使用了缓存结果，直接获取翻译后的图片
+    if (submitResult.status === 'successful') {
+      const resultResponse = await fetch(`http://127.0.0.1:${port}/result/${taskId}`)
+      if (resultResponse.ok) {
+        const translatedImageBuffer = Buffer.from(await resultResponse.arrayBuffer())
+        return { success: true, data: translatedImageBuffer.toString('base64'), taskId, cached: true }
+      } else {
+        // 缓存结果获取失败，删除损坏的缓存目录
+        const mangaTranslatorResultPath = path.join(
+          __dirname,
+          'other_code',
+          'manga-image-translator',
+          'result',
+          taskId
+        )
+        try {
+          await fs.promises.rm(mangaTranslatorResultPath, { recursive: true, force: true })
+        } catch (err) {
+          // ignore
+        }
+        throw new Error('Cached result fetch failed, cache deleted')
+      }
+    }
+    
+    // 轮询等待翻译完成
+    let attempts = 0
+    const maxAttempts = 120  // 最多等待 120 秒
+    while (attempts < maxAttempts) {
+      const stateResponse = await fetch(`http://127.0.0.1:${port}/task-state?taskid=${taskId}`)
+      const stateResult = await stateResponse.json()
+      
+      if (stateResult.finished) {
+        // 翻译完成，获取结果
+        const resultResponse = await fetch(`http://127.0.0.1:${port}/result/${taskId}`)
+        if (resultResponse.ok) {
+          const translatedImageBuffer = Buffer.from(await resultResponse.arrayBuffer())
+          return { success: true, data: translatedImageBuffer.toString('base64'), taskId }
+        } else {
+          throw new Error('Failed to fetch translated image')
+        }
+      }
+      
+      if (stateResult.state && stateResult.state.startsWith('error')) {
+        throw new Error(`Translation error: ${stateResult.state}`)
+      }
+      
+      // 等待 1 秒后重试
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      attempts++
+    }
+    
+    throw new Error('Translation timeout')
+  } catch (err) {
+    console.error('Translation error:', err)
+    return { success: false, error: err.message }
+  }
+})
+
+// 检测图片中的文字语言（OCR 检测）
+ipcMain.handle('detect-image-language', async (event, { imagePath }) => {
+  const translationConfig = setting.translation || {}
+  const port = translationConfig.mangaTranslatorPort || 5000
+  
+  try {
+    const FormData = require('form-data')
+    const formData = new FormData()
+    
+    // 读取图片文件
+    const imageBuffer = await fs.promises.readFile(imagePath)
+    formData.append('file', imageBuffer, { filename: 'image.png', contentType: 'image/png' })
+    formData.append('tgt_lang', 'CHS')
+    formData.append('translator', 'none')  // 不翻译，只做 OCR
+    formData.append('detector', 'default')
+    
+    // 提交任务
+    const submitResponse = await fetch(`http://127.0.0.1:${port}/run`, {
+      method: 'POST',
+      body: formData,
+      headers: formData.getHeaders()
+    })
+    
+    if (!submitResponse.ok) {
+      throw new Error(`Submit failed: ${submitResponse.statusText}`)
+    }
+    
+    const submitResult = await submitResponse.json()
+    const taskId = submitResult.task_id
+    
+    if (!taskId) {
+      throw new Error('No task_id returned')
+    }
+    
+    // 如果已经有缓存结果，直接获取
+    if (submitResult.status === 'successful') {
+      return await getOCRResult(port, taskId)
+    }
+    
+    // 轮询等待完成
+    let attempts = 0
+    const maxAttempts = 60  // 最多等待 60 秒
+    while (attempts < maxAttempts) {
+      const stateResponse = await fetch(`http://127.0.0.1:${port}/task-state?taskid=${taskId}`)
+      const stateResult = await stateResponse.json()
+      
+      if (stateResult.finished) {
+        return await getOCRResult(port, taskId)
+      }
+      
+      if (stateResult.state && stateResult.state.startsWith('error')) {
+        throw new Error(`OCR error: ${stateResult.state}`)
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      attempts++
+    }
+    
+    throw new Error('OCR timeout')
+  } catch (err) {
+    console.error('OCR detection error:', err)
+    return { success: false, error: err.message, hasJapanese: false }
+  }
+})
+
+// 获取 OCR 结果并检测是否包含日文
+async function getOCRResult(port, taskId) {
+  try {
+    // 获取翻译后的图片（包含文字）
+    const resultResponse = await fetch(`http://127.0.0.1:${port}/result/${taskId}`)
+    if (!resultResponse.ok) {
+      throw new Error('Failed to fetch result')
+    }
+    
+    // 获取 OCR 识别的文本（通过 detection 结果）
+    const detectResponse = await fetch(`http://127.0.0.1:${port}/detect/${taskId}`)
+    let detectedText = ''
+    if (detectResponse.ok) {
+      const detectResult = await detectResponse.json()
+      // 提取所有识别的文本
+      if (detectResult && detectResult.result) {
+        detectedText = JSON.stringify(detectResult.result)
+      }
+    }
+    
+    // 检测是否包含日文字符
+    const japaneseRegex = /[\u3040-\u309F\u30A0-\u30FF]/
+    const hasJapanese = japaneseRegex.test(detectedText)
+    
+    return { success: true, hasJapanese, detectedText }
+  } catch (err) {
+    return { success: false, error: err.message, hasJapanese: false }
+  }
+}
+
+// 使用 LLM 翻译文本
+ipcMain.handle('translate-text', async (event, { text, context }) => {
+  const translationConfig = setting.translation || {}
+  const port = translationConfig.llamaPort || 8080
+  
+  const systemPrompt = `你是一个专业的日文到简体中文的翻译助手。你正在翻译日本漫画中的对话和文字。
+请保持翻译的准确性和流畅性，注意：
+1. 保持原文的语气和情感
+2. 对于漫画特有的表达方式，如拟声词、感叹词等，使用中文对应的表达
+3. 如果有上下文，请结合上下文进行翻译
+4. 只输出翻译结果，不要输出任何解释或说明`
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'local-model',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: `请将以下日文翻译成简体中文：\n\n${text}` }
+        ],
+        temperature: 0.3,
+        max_tokens: 500
+      })
+    })
+    
+    if (!response.ok) {
+      throw new Error(`LLM translation failed: ${response.statusText}`)
+    }
+    
+    const result = await response.json()
+    const translatedText = result.choices?.[0]?.message?.content || text
+    return { success: true, text: translatedText }
+  } catch (err) {
+    console.error('LLM translation error:', err)
+    return { success: false, error: err.message, text: text }
+  }
+})
+
+// 前端调试日志
+ipcMain.handle('debug-log', (event, { message, data }) => {
+  console.log(`[前端] ${message}`, data || '')
+  return true
 })

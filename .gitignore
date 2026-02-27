@@ -28,3 +28,8 @@ secret_key.json
 
 .vscode
 devtools
+.opencode
+ForAI.md
+ai-safe-workflow.ps1
+bug.txt
+other_code/

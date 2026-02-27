@@ -36,6 +36,12 @@ const preparePath = () => {
 }
 
 const prepareSetting = () => {
+  // 获取项目根目录
+  const rootPath = getRootPath()
+  
+  // 默认翻译服务路径
+  const defaultMangaTranslatorPath = path.join(rootPath, 'other_code', 'manga-image-translator')
+  
   const defaultSetting = {
     proxy: undefined,
     library: app.getPath('downloads'),
@@ -67,6 +73,21 @@ const prepareSetting = () => {
     displayTitle: 'japaneseTitle',
     keepReadingProgress: true,
     blockedArtists: [],
+    // 翻译服务配置
+    translation: {
+      enabled: false,
+      autoStart: false,  // 应用启动时自动启动翻译服务
+      mangaTranslatorPath: defaultMangaTranslatorPath,  // manga-image-translator 目录路径
+      mangaTranslatorPort: 5000,
+      llamaServerPath: 'D:\\soft\\to_run\\ai\\chatai\\no_model\\llama-b8149-bin-win-cuda-12.4-x64\\llama-server.exe',
+      llamaModelPath: 'D:\\soft\\to_run\\ai\\chatai\\model\\GalTransl-v4-4B-2512.gguf',
+      llamaPort: 8080,
+      targetLang: 'CHS',
+      useCloudAPI: false,
+      cloudAPIUrl: '',
+      cloudAPIKey: '',
+      gpuDevice: 0,  // 0 = RTX 2080 Ti, 1 = RTX 3060
+    },
   }
   
   let setting
@@ -74,6 +95,12 @@ const prepareSetting = () => {
     setting = JSON.parse(fs.readFileSync(path.join(STORE_PATH, 'setting.json'), { encoding: 'utf-8' }))
     // Merge with defaults to ensure all fields exist (backward compatibility)
     setting = { ...defaultSetting, ...setting }
+    // Deep merge translation object to ensure new fields get default values
+    if (setting.translation) {
+      setting.translation = { ...defaultSetting.translation, ...setting.translation }
+    } else {
+      setting.translation = { ...defaultSetting.translation }
+    }
   } catch {
     setting = { ...defaultSetting }
     fs.writeFileSync(path.join(STORE_PATH, 'setting.json'), JSON.stringify(setting, null, '  '), { encoding: 'utf-8' })

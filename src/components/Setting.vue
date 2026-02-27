@@ -26,6 +26,9 @@
           <el-menu-item index="advanced">
             <span>{{$t('m.advanced')}}</span>
           </el-menu-item>
+          <el-menu-item index="translation">
+            <span>{{$t('m.translation')}}</span>
+          </el-menu-item>
           <el-menu-item index="accelerator">
             <span>{{$t('m.accelerator')}}</span>
           </el-menu-item>
@@ -550,6 +553,90 @@
           </el-descriptions-item>
         </el-descriptions>
         </div>
+        <div v-show="activeSettingPanel === 'translation'" class="setting-panel">
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <div class="setting-line">
+                <el-switch v-model="setting.translation.enabled" :active-text="$t('m.translationEnabled')" @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="12" v-if="setting.translation?.enabled">
+              <div class="setting-line">
+                <el-switch v-model="setting.translation.autoStart" :active-text="$t('m.translationAutoStart')" @change="saveSetting" />
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20" v-if="setting.translation?.enabled">
+            <el-col :span="24">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.mangaTranslatorPath')}}</span>
+                <el-input v-model="setting.translation.mangaTranslatorPath" :placeholder="$t('m.mangaTranslatorPathPlaceholder')" clearable @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.mangaTranslatorPort')}}</span>
+                <el-input-number v-model="setting.translation.mangaTranslatorPort" :min="1024" :max="65535" @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.translationTargetLang')}}</span>
+                <el-select v-model="setting.translation.targetLang" @change="saveSetting">
+                  <el-option label="简体中文" value="CHS" />
+                  <el-option label="繁體中文" value="CHT" />
+                  <el-option label="English" value="ENG" />
+                  <el-option label="한국어" value="KOR" />
+                </el-select>
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20" v-if="setting.translation?.enabled">
+            <el-col :span="24">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.llamaServerPath')}}</span>
+                <el-input v-model="setting.translation.llamaServerPath" :placeholder="$t('m.llamaServerPathPlaceholder')" clearable @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="24">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.llamaModelPath')}}</span>
+                <el-input v-model="setting.translation.llamaModelPath" :placeholder="$t('m.llamaModelPathPlaceholder')" clearable @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.llamaPort')}}</span>
+                <el-input-number v-model="setting.translation.llamaPort" :min="1024" :max="65535" @change="saveSetting" />
+              </div>
+            </el-col>
+            <el-col :span="12">
+              <div class="setting-line">
+                <span class="setting-label">{{$t('m.gpuDevice')}}</span>
+                <el-select v-model="setting.translation.gpuDevice" @change="saveSetting">
+                  <el-option label="GPU 0 (RTX 2080 Ti)" :value="0" />
+                  <el-option label="GPU 1 (RTX 3060)" :value="1" />
+                  <el-option label="CPU Only" :value="-1" />
+                </el-select>
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20" v-if="setting.translation?.enabled">
+            <el-col :span="24">
+              <div class="setting-line translation-service-status">
+                <el-button type="primary" @click="startTranslationService" :loading="translationServiceStarting">
+                  {{$t('m.startTranslationService')}}
+                </el-button>
+                <el-button type="danger" @click="stopTranslationService">
+                  {{$t('m.stopTranslationService')}}
+                </el-button>
+                <el-tag :type="translationServiceStatus.isRunning ? 'success' : 'info'" style="margin-left: 12px;">
+                  {{ translationServiceStatus.isRunning ? $t('m.serviceRunning') : $t('m.serviceStopped') }}
+                </el-tag>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
         <div v-show="activeSettingPanel === 'about'" class="setting-panel">
           <el-descriptions :column="1">
           <el-descriptions-item :label="$t('m.appName')+':'">exhentai-manga-manager</el-descriptions-item>
@@ -741,6 +828,12 @@ onMounted(() => {
       if (res.autoCheckUpdates) autoCheckUpdates(false)
       if (res.enabledLANBrowsing) ipcRenderer.invoke('enable-LAN-browsing')
       if (res.customCss) electronFunction['insert-css'](res.customCss)
+      
+      // 自动启动翻译服务
+      if (res.translation?.enabled && res.translation?.autoStart) {
+        console.log('[翻译] 自动启动翻译服务')
+        startTranslationService()
+      }
     })
 })
 
@@ -917,6 +1010,35 @@ const unblockArtist = (artist) => {
     }
   }
 }
+
+// 翻译服务相关
+const translationServiceStarting = ref(false)
+const translationServiceStatus = ref({ isRunning: false })
+
+const startTranslationService = async () => {
+  translationServiceStarting.value = true
+  try {
+    await ipcRenderer.invoke('start-translation-service')
+  } catch (e) {
+    printMessage('error', t('m.translationServiceStartFailed') + ': ' + e.message)
+  } finally {
+    translationServiceStarting.value = false
+  }
+}
+
+const stopTranslationService = async () => {
+  await ipcRenderer.invoke('stop-translation-service')
+  translationServiceStatus.value = { isRunning: false }
+}
+
+// 监听翻译服务状态
+ipcRenderer.on('translation-service-status', (event, status) => {
+  if (status.type === 'success' || status.type === 'info') {
+    translationServiceStatus.value = { isRunning: true }
+  } else if (status.type === 'error') {
+    translationServiceStatus.value = { isRunning: false }
+  }
+})
 
 const openLink = (link) => {
   ipcRenderer.invoke('open-url', link)
