@@ -5,6 +5,10 @@
 ### v1.0.14 (2026-02-27) - AI 漫画翻译功能集成 [已发布]
 - **[功能] AI 实时翻译漫画**
   - 目标：在阅读器中实现一键翻译日语漫画为中文
+  - **推送记录 (2026-02-27)**:
+    - 推送 `modules/translationService.js` (翻译服务管理器)
+    - 推送 `other_code/manga-image-translator/` 源码（不含 .venv 虚拟环境和 models 目录）
+    - 更新 `.gitignore` 允许 manga-image-translator 目录，但排除 .venv 和 models
   - 架构：
     ```
     ┌─────────────────────────────────────────────────────────────┐
@@ -467,31 +471,24 @@
 3. 切换漫画时自动清空队列
 **状态**: ✅ 已修复
 
-### BUG-TR-010: 切换漫画时翻译队列未清空
+### BUG-TR-010: 切换漫画后阅读器卡住 [v1.0.14 已修复]
 **描述**: 切换到第二本漫画后，立即卡在 "Saved [xxx]" 不动
 **现象**: 日志显示保存成功，但没有翻译日志，阅读器不响应
-**原因**: Viewer 缓存目录清理不彻底，图片加载卡住
-**状态**: ⚠️ 已添加详细日志，待用户验证
+**解决**: 
+1. 取消之前翻译任务 + 清空翻译队列 + 清理缓存
+2. 释放图片发送锁并等待 300ms
 
-### BUG-TR-011: 切换漫画后阅读器卡住
-**描述**: 切换到第二本漫画后，立即卡在 "Saved [xxx]" 不动
-**现象**: 日志显示保存成功，但没有翻译日志，阅读器不响应
-**原因**: Viewer 缓存目录清理不彻底，图片加载卡住
-**状态**: ⚠️ 已添加详细日志，待用户验证
-
-### BUG-TR-012: 点击×关闭后显存未释放
+### BUG-TR-011: 点击×关闭后显存未释放 [v1.0.14 已修复]
 **描述**: 点击窗口右上角×或 Ctrl+C 关闭应用后，显存仍然占用 15GB+
-**现象**: 必须手动执行 `taskkill /IM python.exe /F` 才能释放显存
-**原因**: 
-1. `stopAll()` 是异步的，主进程被杀死时可能还未完成
-2. 子进程未正确终止
 **解决**: 
 1. PID 文件记录子进程 PID
 2. `process.on('exit')` 使用同步 `execSync` 强制终止
 3. 启动时自动清理上次的残留进程
-**状态**: ⚠️ 已实现，待用户验证
 
-### BUG-TR-013: Vue Proxy 对象无法通过 IPC 序列化
+### BUG-TR-012: Vue Proxy 对象无法通过 IPC 序列化 [v1.0.14 已修复]
+**描述**: 使用 `ipcRenderer.invoke('debug-log')` 传递调试数据时出错
+**现象**: "An object could not be cloned"
+**解决**: 移除所有 `debug-log` 调用，或只传递基本类型
 **描述**: 使用 `ipcRenderer.invoke('debug-log')` 传递调试数据时出错
 **现象**: "An object could not be cloned"
 **原因**: Vue 的 Proxy 对象（如 `book?.tags`）无法序列化
@@ -564,43 +561,42 @@ this.displayBookList = bookList
 this.chunkList()
 ```
 
-### BUG-008: 封面无法显示
+### BUG-008: 封面无法显示 [v1.0.14 已修复]
 **描述**: 大部分漫画没有coverPath，封面图片404
 **现象**: 封面图片broken，network显示404
 **原因**: BookCard.vue直接使用book.coverPath未处理文件路径转换
 **解决**: 添加getCoverUrl函数转换路径格式，并在onError时触发generateCoverOnDemand动态生成封面
 
-### BUG-009: 所有漫画显示同一标题（进行中）
+### BUG-009: 所有漫画显示同一标题 [v1.0.5 已修复]
 **描述**: GUI中所有漫画卡片显示相同的标题
 **现象**: 日志显示数据正确（First chunk book标题不同），但界面所有标题相同
-```
-console: First chunk book: 純愛&NTR欲張りセット~弓道部部長ver.
-console: Second chunk book: 初夢福袋企画まとめ
-GUI: 所有卡片都显示"純愛&NTR欲張りセット~弓道部部長ver."
-```
-**可能原因**:
-1. Vue响应式问题：bookList对象可能被共享引用
-2. v-for的key问题：所有漫画id可能相同
-3. getDisplayTitle函数中的setting.displayTitle可能读取错误
-**调试**: 已添加console.log查看BookCard接收到的数据
-**待验证**: 检查每个book.id是否唯一，检查visibleChunkDisplayBookList计算属性
+**原因**: 
+1. Sequelize `raw: true` 返回原始数据，tags 字段是 JSON 字符串
+2. bookList 对象共享引用，响应式问题
+**解决**: 
+1. 主进程返回前 JSON.parse(book.tags)
+2. pinia getter 添加类型检查
+3. 创建数据快照防止引用共享
 
-### BUG-010: 封面生成失败（ENOENT）
+### BUG-010: 封面生成失败（ENOENT） [v1.0.12 已修复]
 **描述**: 大量错误 `Error: ENOENT: no such file or directory, open 'tmp/xxx.webp'`
 **现象**: 
 ```
 [Error: ENOENT: no such file or directory, open 'C:\Users\x\AppData\Roaming\exhentai-manga-manager\tmp\55yst2l6.webp']
 Patch G:\hitomi\单行本\[...].cbz failed because Error: ENOENT
 ```
-**原因**: patch-local-metadata-by-book在尝试读取tmp目录下的临时文件时文件不存在
-**推测**: 并发封面生成导致临时文件被提前删除或清理
-**状态**: 需要检查tmp目录管理逻辑
+**解决**: 
+1. 7z `e` 命令替代 `x` 命令
+2. 独立 `taskTempDir` 子目录
+3. 添加文件存在性检查和重试机制
 
-### BUG-011: EBUSY文件锁定（Windows）
+### BUG-011: EBUSY文件锁定（Windows） [v1.0.14 已修复]
 **描述**: `Error: EBUSY: resource busy or locked, unlink 'tmp/xxx.webp'`
 **现象**: Windows上删除临时文件失败，文件被占用
-**原因**: 多个进程/线程同时操作同一tmp文件，或文件句柄未释放
-**状态**: 需要优化tmp文件清理逻辑，添加重试机制
+**解决**: 
+1. 切换漫画时先释放 `sendImageLock`
+2. 等待 300ms 让操作完成
+3. 逐个删除文件，跳过 EBUSY 错误
 
 ### BUG-012: 扫描速度慢，无进度条
 **描述**: 扫描74721本书需要约2分钟，期间无视觉反馈
@@ -657,49 +653,6 @@ Patch G:\hitomi\单行本\[...].cbz failed because Error: ENOENT
 **状态**: ✅ 已修复
 
 ---
-
-## 核心问题诊断
-
-### 问题1：所有漫画标题相同
-
-**检查点**：
-1. 数据库中每本书的title字段是否都相同？
-2. bookList数组中的每个book对象的title属性是否不同？
-3. v-for的:key是否使用book.id？（确保id唯一）
-4. getDisplayTitle函数中的setting.displayTitle是否全局响应式？
-
-**需要验证的代码**：
-```javascript
-// App.vue line 118
-v-for="(book, index) in visibleChunkDisplayBookList"
-:key="book.id"  // ← 检查book.id是否每个都不同
-
-// pinia.js getDisplayTitle
-getDisplayTitle (book) {
-  switch (this.setting.displayTitle) {
-    case 'japaneseTitle':
-      return book.title_jpn || book.title  // ← book.title_jpn是否都为空？
-  }
-}
-```
-
-### 问题2：封面生成失败
-
-**tmp目录问题**：
-- 位置：`C:\Users\x\AppData\Roaming\exhentai-manga-manager\tmp`
-- 错误：ENOENT（文件不存在）、EBUSY（文件被占用）
-- 可能原因：
-  1. getImageListByBook从cbz提取第一页后，tmp文件立即被删除
-  2. 并发请求导致竞争条件
-  3. Windows文件锁释放慢
-
-**建议**：
-- 检查fileLoader/index.js中的tmp文件管理
-- 确保generateCoverOnDemand和getImageListByBook不冲突
-- 考虑使用独立的tmp子目录或文件名加锁
-
----
-
 ## 系统架构说明
 
 ### 数据流程
@@ -791,39 +744,6 @@ npm run dev
 
 ---
 
-## 性能优化建议（待实现）
-
-### 1. 参考Komga的极速加载
-- 将bookList和displayBookList分离，避免每次过滤都重新计算
-- 使用计算属性缓存visibleChunkDisplayBookList
-- 实现增量更新，扫描到新书就立即添加到displayBookList，而不是等全部扫描完
-
-### 2. 封面加载优化
-- 预生成封面时批量处理，避免单个封面生成失败影响整体
-- 使用封面缓存策略，已存在的封面不再重新生成
-- 优化tmp文件管理，避免文件锁定冲突
-
-### 3. 扫描速度优化
-- 目前扫描是单线程，可考虑分批并行扫描（但要注意HDD的随机读写性能）
-- 使用数据库索引加速查询
-- 增量扫描时只对比修改时间，避免全量hash
-
-### 4. 用户体验
-- 显示扫描进度条（当前只有文本消息）
-- 扫描过程中实时显示新找到的漫画（边扫边显示）
-- 优先显示用户上次浏览的位置（记录currentPage和scroll位置）
-
----
-
-## 已知限制
-
-1. **Windows文件锁定**: HDD上大量小文件操作时容易出现EBUSY错误
-2. **响应式更新**: Vue3的响应式系统在74500+数据量时可能出现性能问题
-3. **内存占用**: 一次性加载所有漫画到内存可能占用大量RAM（约1-2GB）
-4. **HDD随机读写**: 封面生成需要读取cbz内部文件，HDD随机读写性能差，建议使用SSD
-
----
-
 ## 测试数据
 - 漫画库: G:\hitomi\单行本 (74721本)
 - 数据库: 67583本（已有）
@@ -863,31 +783,6 @@ console.log('book is reactive?', Vue.isReactive(bookList[0]))
 // 如果发现数据更新但视图不刷新，尝试：
 this.bookList = [...bookList]  // 创建新数组触发响应
 this.displayBookList = [...bookList]
-```
-
----
-
-## 旧代码参考
-
-### 正确的BookCard使用方式（从old_code/backup_v3）
-- BookCard.vue应使用`:book="book"` prop
-- getDisplayTitle从pinia获取，传入book参数
-- coverPath应该通过getCoverUrl转换
-
-### 正确的启动流程（从old_code/backup_v3）
-```javascript
-// old_code/backup_v3/src/App.vue line 370-386
-ipcRenderer.invoke('load-setting')
-.then(async (res) => {
-  this.setting = res
-  await this.loadLibraryList()
-  await this.loadBookList()
-  if (this.libraryList && this.libraryList.length > 0) {
-    this.loadBookList(true)  // 后台扫描
-  } else if (this.setting.library) {
-    this.loadBookList(true)
-  }
-})
 ```
 
 ---
