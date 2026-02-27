@@ -1,6 +1,6 @@
 # manga-image-translator 安装说明
 
-> **来源**: 基于 [zyddnys/manga-image-translator](https://github.com/zyddnys/manga-image-translator) (2024.09.12 版本) 修改
+> **来源**: 基于 [zyddnys/manga-image-translator](https://github.com/zyddnys/manga-image-translator) (commit: 3506d3b5, 2024.07.28 版本) 修改
 > 
 > 原版后来经过大幅重构，引入了大量 bug。本版本保留了稳定的核心翻译功能，并修复了兼容性问题。
 
