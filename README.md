@@ -86,6 +86,8 @@
 
 ### 安装步骤
 
+> **关于 manga-image-translator**: 本项目使用的是基于 [zyddnys/manga-image-translator](https://github.com/zyddnys/manga-image-translator) (2024.09.12 版本) 的修改版，原版后来经过大幅重构 (新版本引入了大量 bug)，当前版本保留了稳定的核心翻译功能，并修复了兼容性问题。
+
 #### 1. 克隆项目
 ```bash
 git clone https://github.com/lumiamilk/exhentai-manga-manager-change.git
