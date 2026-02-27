@@ -106,6 +106,9 @@ uv venv --python 3.9
 
 # 安装其他依赖
 .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 重要: 降级 httpx 到 0.27.2 (新版有兼容性问题)
+.venv\Scripts\python.exe -m pip install httpx==0.27.2
 ```
 
 #### 3. 下载模型文件
