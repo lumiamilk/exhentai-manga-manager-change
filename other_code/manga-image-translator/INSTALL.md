@@ -5,24 +5,58 @@
 - uv 包管理器
 - NVIDIA GPU + CUDA
 
+> **注意**: 本项目不包含 `.venv` 虚拟环境和 `models` 目录，clone 后需按以下步骤安装。
+
 ## 安装步骤
 
 ```powershell
 # 进入项目目录
-cd D:\temp\manga_reader\exhentai-manga-manager\other_code\manga-image-translator
+cd other_code\manga-image-translator
 
 # 创建 Python 3.9 虚拟环境
 uv venv --python 3.9
 
 # 先安装 PyTorch CUDA 版本 (重要!)
-uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
-# 再安装其他依赖
-uv pip install -r requirements.txt
-
-# 测试运行
-.venv\Scripts\python.exe -m manga_translator --help
+# 安装其他依赖
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+## 下载模型文件
+
+需要下载以下模型到 `models/` 目录：
+
+### OCR 模型
+- `manga-ocr-full.ckpt` - 从 [HuggingFace](https://huggingface.co/kha-white/manga-ocr-backup) 下载
+
+### Detection 模型
+- `craft_mixed.onnx` - 从 [HuggingFace](https://huggingface.com/kha-white/manga-translator/tree/main/models) 下载
+- 或使用 `default` 检测器 (需要 `.pth` 文件)
+
+### Inpainting 模型 (可选)
+- `lama_mpe.ckpt` - 用于移除原文
+
+### Upscaling 模型 (可选)
+- `RealESRGAN_x2plus.pth` - 超分辨率
+
+模型目录结构：
+```
+models/
+├── detection/
+│   └── craft_mixed.onnx
+├── inpainting/
+│   └── lama_mpe.ckpt
+├── ocr/
+│   └── manga-ocr-full.ckpt
+└── upscaling/
+    └── RealESRGAN_x2plus.pth
+```
+
+## 测试运行
+
+```powershell
+.venv\Scripts\python.exe -m manga_translator --help
 
 ## 启动翻译服务
 

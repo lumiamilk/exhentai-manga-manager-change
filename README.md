@@ -75,6 +75,65 @@
 ## 贡献
 - 请参考[贡献指南](https://github.com/SchneeHertz/exhentai-manga-manager/blob/master/CONTRIBUTING.md)
 
+## AI 漫画翻译功能
+
+从 v1.0.14 开始支持 AI 实时翻译日语漫画为中文。
+
+### 环境要求
+- NVIDIA GPU (RTX 2080 Ti 或更高，22GB 显存)
+- llama-server (本地 LLM 服务)
+- manga-image-translator (漫画 OCR + 翻译)
+
+### 安装步骤
+
+#### 1. 克隆项目
+```bash
+git clone https://github.com/lumiamilk/exhentai-manga-manager-change.git
+cd exhentai-manga-manager-change
+npm install
+```
+
+#### 2. 安装 manga-image-translator 依赖
+
+```powershell
+cd other_code\manga-image-translator
+
+# 创建 Python 3.9 虚拟环境
+uv venv --python 3.9
+
+# 先安装 PyTorch CUDA 版本 (重要!)
+.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# 安装其他依赖
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+#### 3. 下载模型文件
+
+需要下载以下模型到 `other_code/manga-image-translator/models/` 目录：
+
+- **OCR**: `manga-ocr-full.ckpt`
+- **Detection**: `craft_mixed.onnx`
+- **Inpainting**: `lama_mpe.ckpt` (可选)
+
+详见 [manga-image-translator 安装说明](other_code/manga-image-translator/INSTALL.md)
+
+#### 4. 下载 LLM 模型 (用于翻译)
+
+推荐使用 [GalTransl-v4-4B](https://huggingface.co/2bb6bf1d14/GalTransl-v4-4B-gguf) 或其他日译中模型。
+
+### 配置
+
+1. 启动 llama-server (翻译后端)：
+```powershell
+llama-server.exe -m GalTransl-v4-4B-2512.gguf -ngl 99 -c 4096 --port 8080
+```
+
+2. 在应用设置中启用自动翻译，配置：
+   - manga-translator 路径: `other_code/manga-image-translator`
+   - llama-server 路径: 你的 llama-server.exe 路径
+   - 目标语言: CHS (简体中文)
+
 ## Thanks
 本项目受到了诸多开源项目的帮助
 
