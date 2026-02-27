@@ -4,6 +4,8 @@
 
 # exhentai-manga-manager
 
+> ⚠️ **本项目是 [SchneeHertz/exhentai-manga-manager](https://github.com/SchneeHertz/exhentai-manga-manager) v1.6.13 的硬分叉**，添加了 AI 漫画翻译等功能。
+
 **标签化管理, 阅读从ExHentai下载的短篇漫画**
 
 <p>
