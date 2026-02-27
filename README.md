@@ -145,8 +145,5 @@ llama-server.exe -m GalTransl-v4-4B-2512.gguf -ngl 99 -c 4096 --port 8080
 本项目受到了诸多开源项目的帮助
 
 - [EhTagTranslation/Database](https://github.com/EhTagTranslation/Database)
-
-
-## 赞助
-[!["爱发电"](https://static.afdiancdn.com/static/img/logo/logo.png)](https://afdian.com/a/SeldonHorizon)
-[如果这个软件帮到了你，可以请我喝杯奶茶](https://afdian.com/a/SeldonHorizon)
+- [zyddnys/manga-image-translator](https://github.com/zyddnys/manga-image-translator) (基于 2024.07.28 版本)
+- [SchneeHertz/exhentai-manga-manager](https://github.com/SchneeHertz/exhentai-manga-manager) (v1.6.13 硬分叉)
