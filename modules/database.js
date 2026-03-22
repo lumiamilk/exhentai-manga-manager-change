@@ -154,8 +154,37 @@ const prepareLibraryModel = (databasePath) => {
   return Library
 }
 
+const prepareCommentCacheModel = (databasePath) => {
+  const sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: databasePath,
+    logging: false
+  })
+  const CommentCache = sequelize.define('CommentCache', {
+    bookId: {
+      type: DataTypes.TEXT,
+      allowNull: false,
+      primaryKey: true
+    },
+    comments: {
+      type: DataTypes.JSON,
+      defaultValue: []
+    },
+    sourceLanguage: {
+      type: DataTypes.TEXT,
+      defaultValue: 'unknown'
+    },
+    fetchedAt: {
+      type: DataTypes.INTEGER,
+      defaultValue: () => Date.now()
+    }
+  })
+  return CommentCache
+}
+
 module.exports = {
   prepareMangaModel,
   prepareMetadataModel,
-  prepareLibraryModel
+  prepareLibraryModel,
+  prepareCommentCacheModel
 }

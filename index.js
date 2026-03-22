@@ -18,7 +18,7 @@ const { decode } = require('@msgpack/msgpack')
 const { Op } = require('sequelize')
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads')
 
-const { prepareMangaModel, prepareMetadataModel, prepareLibraryModel } = require('./modules/database')
+const { prepareMangaModel, prepareMetadataModel, prepareLibraryModel, prepareCommentCacheModel } = require('./modules/database')
 const { prepareTemplate } = require('./modules/prepare_menu.js')
 const { getBookFilelist, geneCover, getImageListByBook, deleteImageFromBook } = require('./fileLoader/index.js')
 const { STORE_PATH, isPortable, TEMP_PATH, COVER_PATH, VIEWER_PATH, prepareSetting, prepareCollectionList, preparePath } = require('./modules/init_folder_setting.js')
@@ -236,6 +236,7 @@ let collectionList = prepareCollectionList()
 // ============================================================================
 let Manga = prepareMangaModel(path.join(STORE_PATH, './database.sqlite'))
 let Library = prepareLibraryModel(path.join(STORE_PATH, './database.sqlite'))
+let CommentCache = prepareCommentCacheModel(path.join(STORE_PATH, './database.sqlite'))
 let metadataSqliteFile
 if (setting.metadataPath) {
   metadataSqliteFile = path.join(setting.metadataPath, './metadata.sqlite')
@@ -257,6 +258,7 @@ const getColumns = async (sequelize, tableName) => {
   }
   await Metadata.sync()
   await Library.sync()
+  await CommentCache.sync()
   
   // Migration: if libraries table is empty but setting.library exists, create default library
   const libraryCount = await Library.count()
@@ -1704,229 +1706,46 @@ ipcMain.handle('post-data-ex', async (event, { url, data }) => {
   }
 })
 
-// Search galleries by title and return with language info for multi-version comment loading
-ipcMain.handle('search-galleries-for-comments', async (event, { title, existingUrl, cookie }) => {
-  if (!title) return { galleries: [] }
-  
-  try {
-    // Search on E-Hentai by title
-    const searchUrl = `https://e-hentai.org/?f_search=${encodeURIComponent(title)}&f_cats=161`
-    
-    const options = {
-      headers: {
-        Cookie: cookie || ''
-      }
-    }
-    if (setting.proxy) {
-      options.agent = new HttpsProxyAgent(setting.proxy)
-    }
-    
-    const res = await fetchWithRetry(searchUrl, options, 2, 15000)
-    const html = await res.text()
-    
-    // Parse search results
-    const galleries = []
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    const rows = doc.querySelectorAll('.gtr0, .gtr1')
-    
-    for (const row of rows) {
-      try {
-        const link = row.querySelector('.glink')?.closest('a')
-        if (!link) continue
-        
-        const url = link.href
-        const galleryTitle = row.querySelector('.glink')?.textContent || ''
-        
-        // Extract gallery info
-        const typeCell = row.querySelector('.cn, .cs')
-        const category = typeCell?.textContent || ''
-        
-        // Get language from title or tags (simplified - look for [chinese], [english], etc.)
-        const langMatch = galleryTitle.match(/\[(chinese|english|japanese|korean|translated)\]/i)
-        let language = 'unknown'
-        if (langMatch) {
-          const lang = langMatch[1].toLowerCase()
-          if (lang === 'chinese' || lang === '中文') language = 'chinese'
-          else if (lang === 'english') language = 'english'
-          else if (lang === 'japanese') language = 'japanese'
-          else if (lang === 'korean') language = 'korean'
-        }
-        
-        // Check if translated
-        const isTranslated = /\[.*translated.*\]/i.test(galleryTitle) || galleryTitle.toLowerCase().includes('translated')
-        
-        galleries.push({
-          url,
-          title: galleryTitle,
-          category,
-          language,
-          isTranslated
-        })
-      } catch (e) {
-        // Skip this row
-      }
-    }
-    
-    // Sort by language priority: chinese > english > others
-    const languagePriority = { 'chinese': 1, 'english': 2, 'japanese': 3, 'korean': 4 }
-    galleries.sort((a, b) => {
-      const pa = languagePriority[a.language] || 99
-      const pb = languagePriority[b.language] || 99
-      return pa - pb
-    })
-    
-    // Limit to top 5 galleries to avoid too many requests
-    const limitedGalleries = galleries.slice(0, 5)
-    
-    // If existing URL is provided, ensure it's included
-    if (existingUrl && !limitedGalleries.find(g => g.url === existingUrl)) {
-      limitedGalleries.unshift({
-        url: existingUrl,
-        title: title,
-        language: 'unknown',
-        isTranslated: false
-      })
-    }
-    
-    return { galleries: limitedGalleries }
-  } catch (e) {
-    console.log('Search galleries failed:', e)
-    // Return existing URL if search fails
-    if (existingUrl) {
-      return { galleries: [{ url: existingUrl, title: title, language: 'unknown', isTranslated: false }] }
-    }
-    return { galleries: [] }
-  }
-})
-
-// Get comments from multiple gallery URLs
-ipcMain.handle('get-multi-gallery-comments', async (event, { urls, cookie }) => {
-  if (!urls || urls.length === 0) return { comments: [] }
-  
-  const allComments = []
-  const options = {
-    headers: {
-      Cookie: cookie || ''
-    }
-  }
-  if (setting.proxy) {
-    options.agent = new HttpsProxyAgent(setting.proxy)
-  }
-  
-  for (const urlInfo of urls) {
-    try {
-      const res = await fetchWithRetry(urlInfo.url, options, 2, 15000)
-      const html = await res.text()
-      
-      // Parse comments from this gallery
-      const doc = new DOMParser().parseFromString(html, 'text/html')
-      const commentElements = doc.querySelectorAll('#cdiv>.c1')
-      
-      commentElements.forEach(e => {
-        try {
-          const author = e.querySelector('.c2 .c3')?.textContent || 'Unknown'
-          const scoreTail = e.querySelectorAll('.c2 .nosel')
-          const score = scoreTail[scoreTail.length - 1]?.textContent || '0'
-          let content = e.querySelector('.c6')?.innerHTML || ''
-          
-          // Skip empty comments
-          if (!content.trim()) return
-          
-          // Clean content
-          content = content.replace(/<br>/gi, '\n')
-          content = content.replace(/<.+?>/gi, '')
-          content = he.decode(content)
-          
-          allComments.push({
-            author,
-            score,
-            content,
-            sourceUrl: urlInfo.url,
-            sourceTitle: urlInfo.title,
-            sourceLanguage: urlInfo.language,
-            id: nanoid()
-          })
-        } catch (e) {
-          // Skip this comment
-        }
-      })
-    } catch (e) {
-      console.log(`Failed to get comments from ${urlInfo.url}:`, e)
-    }
-  }
-  
-  return { comments: allComments }
-})
-
-// Simple DOMParser for backend (using regex-based parsing)
-class DOMParser {
-  parseFromString(html, type) {
-    return {
-      querySelectorAll: (selector) => {
-        // Simple implementation for common selectors
-        const results = []
-        if (selector === '#cdiv>.c1') {
-          // Extract comment blocks
-          const commentRegex = /<div[^>]*class="c1"[^>]*>([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/gi
-          let match
-          while ((match = commentRegex.exec(html)) !== null) {
-            results.push({
-              innerHTML: match[1],
-              querySelector: (sel) => {
-                if (sel === '.c2 .c3') {
-                  const authorMatch = match[1].match(/<div[^>]*class="c3"[^>]*>([^<]+)<\/div>/i)
-                  return authorMatch ? { textContent: authorMatch[1].trim() } : null
-                }
-                if (sel === '.c6') {
-                  const contentMatch = match[1].match(/<div[^>]*class="c6"[^>]*>([\s\S]*?)<\/div>/i)
-                  return contentMatch ? { innerHTML: contentMatch[1] } : null
-                }
-                return null
-              },
-              querySelectorAll: (sel) => {
-                if (sel === '.c2 .nosel') {
-                  const noselMatches = match[1].matchAll(/<div[^>]*class="nosel"[^>]*>([^<]+)<\/div>/gi)
-                  return [...noselMatches].map(m => ({ textContent: m[1].trim() }))
-                }
-                return []
-              }
-            })
-          }
-        } else if (selector === '.gtr0, .gtr1') {
-          // Extract gallery rows
-          const rowRegex = /<tr[^>]*class="gtr[01]"[^>]*>([\s\S]*?)<\/tr>/gi
-          let match
-          while ((match = rowRegex.exec(html)) !== null) {
-            results.push({
-              innerHTML: match[1],
-              querySelector: (sel) => {
-                if (sel === '.glink') {
-                  const glinkMatch = match[1].match(/<div[^>]*class="glink"[^>]*>([^<]+)<\/div>/i)
-                  return glinkMatch ? { 
-                    textContent: glinkMatch[1].trim(),
-                    closest: (tag) => {
-                      const linkMatch = match[1].match(/<a[^>]*href="([^"]+)"[^>]*>[\s\S]*?<div[^>]*class="glink"/i)
-                      return linkMatch ? { href: linkMatch[1] } : null
-                    }
-                  } : null
-                }
-                if (sel === '.cn, .cs') {
-                  const catMatch = match[1].match(/<div[^>]*class="c[ns]"[^>]*>([^<]+)<\/div>/i)
-                  return catMatch ? { textContent: catMatch[1].trim() } : null
-                }
-                return null
-              }
-            })
-          }
-        }
-        return results
-      }
-    }
-  }
-}
-
 ipcMain.handle('save-book', async (event, book) => {
   return await saveBookToDatabase(book)
+})
+
+// Comment cache operations
+ipcMain.handle('get-comment-cache', async (event, bookId) => {
+  try {
+    const cache = await CommentCache.findByPk(bookId)
+    if (cache) {
+      const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+      if (cache.fetchedAt > oneWeekAgo) {
+        return { 
+          valid: true, 
+          comments: cache.comments, 
+          sourceLanguage: cache.sourceLanguage,
+          fetchedAt: cache.fetchedAt 
+        }
+      }
+      return { valid: false, comments: cache.comments, fetchedAt: cache.fetchedAt }
+    }
+    return null
+  } catch (e) {
+    console.log('Get comment cache failed:', e)
+    return null
+  }
+})
+
+ipcMain.handle('save-comment-cache', async (event, { bookId, comments, sourceLanguage }) => {
+  try {
+    await CommentCache.upsert({
+      bookId,
+      comments,
+      sourceLanguage: sourceLanguage || 'unknown',
+      fetchedAt: Date.now()
+    })
+    return true
+  } catch (e) {
+    console.log('Save comment cache failed:', e)
+    return false
+  }
 })
 
 // home

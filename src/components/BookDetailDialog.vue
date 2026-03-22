@@ -242,7 +242,10 @@ const openBookDetail = async (book, addToHistory = true) => {
     console.log('Failed to fetch metadata on demand:', e)
   }
   
-  if (setting.value.showComment) getComments(bookDetail.value.url)
+  if (setting.value.showComment) {
+    commentLoading.value = true
+    getMultiVersionComments()
+  }
   if (addToHistory) emit('addToHistory', bookDetail.value.id)
 }
 const openUrl = (url) => {
@@ -329,6 +332,9 @@ const triggerShowComment = () => {
 const getMultiVersionComments = async () => {
   const title = bookDetail.value.title_jpn || bookDetail.value.title || ''
   const existingUrl = bookDetail.value.url
+  const bookId = bookDetail.value.id
+  
+  console.log('getMultiVersionComments - title:', title, 'existingUrl:', existingUrl, 'bookId:', bookId)
   
   if (!title && !existingUrl) {
     comments.value = []
@@ -336,54 +342,278 @@ const getMultiVersionComments = async () => {
     return
   }
   
+  // Step 0: Check cache first
   try {
-    // Step 1: Search for all versions of this manga
-    const searchResult = await ipcRenderer.invoke('search-galleries-for-comments', {
-      title,
-      existingUrl,
-      cookie: appStore.cookie
-    })
-    
-    if (!searchResult.galleries || searchResult.galleries.length === 0) {
-      comments.value = []
+    console.log('Checking cache for bookId:', bookId)
+    const cache = await ipcRenderer.invoke('get-comment-cache', bookId)
+    console.log('Cache result:', cache)
+    if (cache && cache.valid) {
+      console.log('Using cached comments, fetchedAt:', new Date(cache.fetchedAt).toLocaleString())
+      // Restore foundLink from foundLinkHrefs
+      comments.value = (cache.comments || []).map(c => ({
+        ...c,
+        foundLink: (c.foundLinkHrefs || []).map(href => ({ href, value: href }))
+      }))
       commentLoading.value = false
       return
     }
+    if (cache && !cache.valid) {
+      console.log('Cache expired (older than 1 week), fetching fresh comments')
+    }
+    if (!cache) {
+      console.log('No cache found for bookId:', bookId)
+    }
+  } catch (e) {
+    console.log('Cache check failed:', e)
+  }
+  
+  try {
+    // Step 1: Search for all versions of this manga on E-Hentai
+    const searchUrl = `https://e-hentai.org/?f_search=${encodeURIComponent(title)}`
+    console.log('Search URL:', searchUrl)
     
-    // Step 2: Get comments from all found galleries
-    const commentResult = await ipcRenderer.invoke('get-multi-gallery-comments', {
-      urls: searchResult.galleries,
+    const searchHtml = await ipcRenderer.invoke('get-ex-webpage', {
+      url: searchUrl,
       cookie: appStore.cookie
     })
     
-    if (!commentResult.comments) {
-      comments.value = []
-      commentLoading.value = false
-      return
+    console.log('Search HTML length:', searchHtml?.length)
+    
+    // Debug: log a sample of the HTML to see the structure
+    console.log('Search HTML sample:', searchHtml.slice(0, 2000))
+    
+    // Step 2: Parse search results using browser's native DOMParser
+    const searchDoc = new DOMParser().parseFromString(searchHtml, 'text/html')
+    
+    // Try multiple selectors for gallery rows (E-Hentai structure may vary)
+    let galleryRows = searchDoc.querySelectorAll('.gtr0, .gtr1')
+    if (galleryRows.length === 0) {
+      // Try alternative selector: table rows with glname class
+      galleryRows = searchDoc.querySelectorAll('tr[id^="tr_"]')
+    }
+    if (galleryRows.length === 0) {
+      // Try another alternative: glname links directly
+      const glnameLinks = searchDoc.querySelectorAll('.glname a')
+      if (glnameLinks.length > 0) {
+        // Create pseudo-rows from glname links
+        galleryRows = glnameLinks
+      }
+    }
+    if (galleryRows.length === 0) {
+      // Try: itg table rows
+      galleryRows = searchDoc.querySelectorAll('.itg tr')
     }
     
-    // Step 3: Process and deduplicate comments
+    console.log('Gallery rows found:', galleryRows.length)
+    
+    const galleries = []
+    galleryRows.forEach(row => {
+      try {
+        const linkEl = row.querySelector('.glink')?.closest('a')
+        if (!linkEl) return
+        
+        const url = linkEl.href
+        const galleryTitle = row.querySelector('.glink')?.textContent || ''
+        
+        console.log('Found gallery:', galleryTitle, url)
+        
+        // Detect language from title
+        let language = 'unknown'
+        const lowerTitle = galleryTitle.toLowerCase()
+        if (lowerTitle.includes('[chinese]') || lowerTitle.includes('中文') || lowerTitle.includes('漢化') || lowerTitle.includes('汉化')) {
+          language = 'chinese'
+        } else if (lowerTitle.includes('[english]') || lowerTitle.includes('英文')) {
+          language = 'english'
+        } else if (lowerTitle.includes('[japanese]')) {
+          language = 'japanese'
+        } else if (lowerTitle.includes('[korean]')) {
+          language = 'korean'
+        }
+        
+        galleries.push({ url, title: galleryTitle, language })
+      } catch (e) {
+        console.log('Error parsing row:', e)
+      }
+    })
+    
+    // Sort by language priority: chinese > english > others
+    const languagePriority = { 'chinese': 1, 'english': 2, 'japanese': 3, 'korean': 4 }
+    galleries.sort((a, b) => {
+      const pa = languagePriority[a.language] || 99
+      const pb = languagePriority[b.language] || 99
+      return pa - pb
+    })
+    
+    // Group galleries by language for priority-based loading
+    const galleriesByLang = {}
+    galleries.forEach(g => {
+      const lang = g.language || 'unknown'
+      if (!galleriesByLang[lang]) galleriesByLang[lang] = []
+      galleriesByLang[lang].push(g)
+    })
+    
+    // Define language priority order
+    const langOrder = ['chinese', 'english', 'japanese', 'korean', 'unknown']
+    
+    console.log('Galleries by language:', galleriesByLang)
+    
+    // Step 3: Get comments with language priority
+    // If a language has comments, stop and don't fetch lower priority languages
     comments.value = []
     const seenContent = new Set()
     
-    for (const comment of commentResult.comments) {
-      // Deduplicate by content (first 100 chars)
-      const contentKey = comment.content.slice(0, 100).trim()
-      if (seenContent.has(contentKey)) continue
-      seenContent.add(contentKey)
+    for (const lang of langOrder) {
+      const langGalleries = galleriesByLang[lang]
+      if (!langGalleries || langGalleries.length === 0) continue
       
-      // Extract links from content
-      const foundLink = _.uniqBy(linkify.find(comment.content.replace(/[<"]/gi, ' '), 'url'), 'href')
+      // Limit to 2 galleries per language to reduce requests
+      const galleriesToFetch = langGalleries.slice(0, 2)
       
-      comments.value.push({
-        author: comment.author,
-        score: comment.score,
-        content: comment.content,
-        foundLink,
-        id: comment.id,
-        sourceTitle: comment.sourceTitle,
-        sourceLanguage: comment.sourceLanguage
-      })
+      let commentsFound = 0
+      
+      for (const gallery of galleriesToFetch) {
+        try {
+          console.log(`Fetching comments from ${lang}:`, gallery.url)
+          const galleryHtml = await ipcRenderer.invoke('get-ex-webpage', {
+            url: gallery.url,
+            cookie: appStore.cookie
+          })
+          
+          console.log('Gallery HTML length:', galleryHtml?.length)
+          
+          // Parse comments using browser's native DOMParser
+          const galleryDoc = new DOMParser().parseFromString(galleryHtml, 'text/html')
+          const commentElements = galleryDoc.querySelectorAll('#cdiv > .c1')
+          
+          console.log('Comment elements found:', commentElements.length)
+          
+          commentElements.forEach(e => {
+            try {
+              const author = e.querySelector('.c2 .c3')?.textContent || 'Unknown'
+              const scoreTail = e.querySelectorAll('.c2 .nosel')
+              const score = scoreTail[scoreTail.length - 1]?.textContent || '0'
+              let content = e.querySelector('.c6')?.innerHTML || ''
+              
+              console.log('Comment:', author, score, content.slice(0, 50))
+              
+              // Skip empty comments
+              if (!content.trim()) return
+              
+              // Extract links before cleaning
+              const foundLink = _.uniqBy(linkify.find(content.replace(/[<"]/gi, ' '), 'url'), 'href')
+              
+              // Clean content
+              content = content.replace(/<br>/gi, '\n')
+              content = content.replace(/<.+?>/gi, '')
+              content = he.decode(content)
+              
+              // Deduplicate by content (first 100 chars)
+              const contentKey = content.slice(0, 100).trim()
+              if (seenContent.has(contentKey)) return
+              seenContent.add(contentKey)
+              
+              comments.value.push({
+                author,
+                score,
+                content,
+                foundLink,
+                id: nanoid(),
+                sourceTitle: gallery.title,
+                sourceLanguage: gallery.language
+              })
+              commentsFound++
+            } catch (e) {
+              console.log('Error parsing comment:', e)
+            }
+          })
+        } catch (e) {
+          console.log(`Failed to get comments from ${gallery.url}:`, e)
+        }
+      }
+      
+      // If we found comments in this language, stop fetching lower priority languages
+      if (commentsFound > 0) {
+        console.log(`Found ${commentsFound} comments in ${lang}, stopping further fetches`)
+        break
+      }
+    }
+    
+    // If no comments found at all, try existing URL as fallback
+    if (comments.value.length === 0 && existingUrl) {
+      console.log('No comments found, trying existing URL:', existingUrl)
+      try {
+        const galleryHtml = await ipcRenderer.invoke('get-ex-webpage', {
+          url: existingUrl,
+          cookie: appStore.cookie
+        })
+        
+        const galleryDoc = new DOMParser().parseFromString(galleryHtml, 'text/html')
+        const commentElements = galleryDoc.querySelectorAll('#cdiv > .c1')
+        
+        commentElements.forEach(e => {
+          try {
+            const author = e.querySelector('.c2 .c3')?.textContent || 'Unknown'
+            const scoreTail = e.querySelectorAll('.c2 .nosel')
+            const score = scoreTail[scoreTail.length - 1]?.textContent || '0'
+            let content = e.querySelector('.c6')?.innerHTML || ''
+            
+            if (!content.trim()) return
+            
+            const foundLink = _.uniqBy(linkify.find(content.replace(/[<"]/gi, ' '), 'url'), 'href')
+            content = content.replace(/<br>/gi, '\n')
+            content = content.replace(/<.+?>/gi, '')
+            content = he.decode(content)
+            
+            comments.value.push({
+              author,
+              score,
+              content,
+              foundLink,
+              id: nanoid(),
+              sourceTitle: title,
+              sourceLanguage: 'unknown'
+            })
+          } catch (e) {
+            // Skip
+          }
+        })
+      } catch (e) {
+        console.log('Fallback fetch failed:', e)
+      }
+    }
+    
+    // Save to cache if we got comments
+    if (comments.value.length > 0 && bookId) {
+      try {
+        // Determine primary source language
+        const langCounts = {}
+        comments.value.forEach(c => {
+          const lang = c.sourceLanguage || 'unknown'
+          langCounts[lang] = (langCounts[lang] || 0) + 1
+        })
+        const primaryLang = Object.entries(langCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unknown'
+        
+        // Serialize comments for IPC (remove non-serializable foundLink)
+        const serializedComments = comments.value.map(c => ({
+          author: c.author,
+          score: c.score,
+          content: c.content,
+          id: c.id,
+          sourceTitle: c.sourceTitle,
+          sourceLanguage: c.sourceLanguage,
+          // foundLink will be regenerated on load
+          foundLinkHrefs: c.foundLink ? c.foundLink.map(l => l.href) : []
+        }))
+        
+        await ipcRenderer.invoke('save-comment-cache', {
+          bookId,
+          comments: serializedComments,
+          sourceLanguage: primaryLang
+        })
+        console.log('Saved comments to cache, count:', comments.value.length, 'language:', primaryLang)
+      } catch (e) {
+        console.log('Save comment cache failed:', e)
+      }
     }
     
     commentLoading.value = false
