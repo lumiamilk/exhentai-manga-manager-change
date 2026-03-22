@@ -1031,7 +1031,13 @@ export default defineComponent({
     handleSearchStringChange (val) {
       if (!val) {
         this.searchString = ''
-        this.handleSortChange(this.sortValue, this.bookList)
+        // Clear search filter and reload
+        if (this.pagination.filters.searchString) {
+          delete this.pagination.filters.searchString
+          this.loadBookList()
+        } else {
+          this.handleSortChange(this.sortValue, this.bookList)
+        }
       }
     },
     handleInput (val) {
@@ -1067,7 +1073,61 @@ export default defineComponent({
         this.searchString = val
       }
     },
-    searchBook (addToHistory = true) {
+    async searchBook (addToHistory = true) {
+      const searchStr = this.searchString?.trim()
+      
+      // If there's a search string, use backend search for better performance and correct results
+      if (searchStr) {
+        // Update pagination filters with search string (preserve other filters)
+        this.pagination.filters = {
+          ...this.pagination.filters,
+          searchString: searchStr
+        }
+        
+        // Load first page from backend with search
+        const paginationParams = JSON.parse(JSON.stringify({
+          page: 1,
+          pageSize: this.pagination.pageSize,
+          sortField: this.pagination.sortField,
+          sortOrder: this.pagination.sortOrder,
+          filters: this.pagination.filters
+        }))
+        
+        try {
+          const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+          
+          if (result && result.data) {
+            result.data.forEach(book => {
+              if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
+                book.pageDiff = true
+              }
+            })
+            
+            this.bookList = result.data
+            this.displayBookList = result.data
+            this.chunkDisplayBookList = result.data
+            this.totalBookCount = result.total
+            this.pagination.page = 1
+            this.lockedTotalForUI = result.total
+            this.realtimeTotal = result.total
+            this.lockedTotalCount = result.total
+          }
+        } catch (e) {
+          console.error('Search error:', e)
+        }
+        
+        if (addToHistory) {
+          this.actionHistory.push({type: 'search', value: this.searchString})
+        }
+        return
+      }
+      
+      // No search string - clear filters and load normal list
+      if (this.pagination.filters.searchString) {
+        delete this.pagination.filters.searchString
+        await this.loadBookList()
+      }
+      
       const checkCondition = (bookString, bookInfo) => {
         const searchStringArray = this.searchString ? this.searchString.split(/\s+(?=(?:[^\'"]*[\'"][^\'"]*[\'"])*[^\'"]*$)/) : []
         const orCondition = _.filter(searchStringArray, (str) => str.startsWith('~'))
@@ -1194,11 +1254,41 @@ export default defineComponent({
     searchFromTag (tag, cat) {
       this.$refs.BookDetailDialogRef.dialogVisibleBookDetail = false
       this.drawerVisibleCollection = false
+      // Hitomi search syntax: namespace:tagname or just tagname
       if (cat) {
-        const letter = this.cat2letter[cat] ? this.cat2letter[cat] : cat
-        this.searchString = `${letter}:"${tag}"$`
+        // Map old category names to Hitomi namespace format
+        // cat2letter maps: language:l, parody:p, character:c, group:g, artist:a, female:f, male:m, mixed:x, other:o, cosplayer:cos
+        // Hitomi uses full names: artist, group, series, type, character, female, male, language
+        const categoryMap = {
+          'l': 'language',
+          'p': 'parody', 
+          'c': 'character',
+          'g': 'group',
+          'a': 'artist',
+          'f': 'female',
+          'm': 'male',
+          'x': 'mixed',
+          'o': 'other',
+          'cos': 'cosplayer'
+        }
+        
+        let namespace = cat
+        // If cat is a single letter, map it to full namespace name
+        if (categoryMap[cat]) {
+          namespace = categoryMap[cat]
+        } else if (cat === 'cat' || cat === 'category') {
+          // Category is a special case - use 'type' for hitomi
+          namespace = 'type'
+        } else if (!['artist', 'group', 'parody', 'character', 'language', 'female', 'male', 'type'].includes(cat)) {
+          // If not a known namespace, treat as regular tag search
+          this.searchString = tag
+          this.searchBook()
+          return
+        }
+        
+        this.searchString = `${namespace}:${tag}`
       } else {
-        this.searchString = `"${tag}"$`
+        this.searchString = tag
       }
       this.searchBook()
     },

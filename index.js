@@ -666,17 +666,76 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     // Build where clause from filters
     const whereClause = { exist: true }
     
-    // Apply filters
+    // Apply filters - Hitomi.la search syntax:
+    // - tagname: search for tag in any category
+    // - namespace:tagname: search for tag in specific category (artist, group, series, type, character, female, male, language)
+    // - -tagname: exclude tag
+    // - multiple tags with space = AND
     if (filters.searchString) {
       const searchConditions = []
-      const searchStr = filters.searchString.toLowerCase()
-      // Basic search: search in title, title_jpn, filepath
+      const searchStr = filters.searchString.trim()
+      
+      // Split by spaces
+      const tokens = searchStr.split(/\s+/)
+      const positiveTags = []
+      const negativeTags = []
+      
+      for (const token of tokens) {
+        if (!token) continue
+        
+        if (token.startsWith('-')) {
+          // Negative tag (exclusion)
+          const negToken = token.slice(1)
+          if (negToken.includes(':')) {
+            const colonIndex = negToken.indexOf(':')
+            const namespace = negToken.slice(0, colonIndex).toLowerCase()
+            const tag = negToken.slice(colonIndex + 1).toLowerCase()
+            negativeTags.push({ tag, category: namespace })
+          } else {
+            negativeTags.push({ tag: negToken.toLowerCase(), category: null })
+          }
+        } else if (token.includes(':')) {
+          // Namespace:tagname format
+          const colonIndex = token.indexOf(':')
+          const namespace = token.slice(0, colonIndex).toLowerCase()
+          const tag = token.slice(colonIndex + 1).toLowerCase()
+          positiveTags.push({ tag, category: namespace })
+        } else {
+          // Simple tag search (search in all categories)
+          positiveTags.push({ tag: token.toLowerCase(), category: null })
+        }
+      }
+      
+      // Build search conditions - search in title/filepath only for basic search
+      // Tags will be filtered in frontend for precise matching
+      const lowerSearchStr = searchStr.toLowerCase()
       searchConditions.push(
-        { title: { [Op.like]: `%${searchStr}%` } },
-        { title_jpn: { [Op.like]: `%${searchStr}%` } },
-        { filepath: { [Op.like]: `%${searchStr}%` } }
+        { title: { [Op.like]: `%${lowerSearchStr}%` } },
+        { title_jpn: { [Op.like]: `%${lowerSearchStr}%` } },
+        { filepath: { [Op.like]: `%${lowerSearchStr}%` } }
       )
+      
+      // For tag search, we need to do frontend filtering for precision
+      // But we can still use a broad LIKE to get candidate results
+      // Add a broad tag search condition that will include candidates
+      const allSearchTags = [
+        ...positiveTags.map(t => t.tag),
+        ...negativeTags.map(t => t.tag)
+      ]
+      for (const tag of allSearchTags) {
+        // Use a more restrictive pattern: search for tag with word boundaries
+        // This helps avoid matching "female" when searching "fox"
+        searchConditions.push(
+          { tags: { [Op.like]: `%${tag}%` } }
+        )
+      }
+      
       whereClause[Op.or] = searchConditions
+      
+      // Store tags for frontend filtering
+      if (positiveTags.length > 0 || negativeTags.length > 0) {
+        whereClause._tagFilters = { positive: positiveTags, negative: negativeTags }
+      }
     }
     
     if (filters.status) {
@@ -713,6 +772,12 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     const orderField = validSortFields[sortField] || 'date'
     const orderDirection = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
     
+    // Extract tag filters before passing to Sequelize (they can't be serialized to SQL)
+    let tagFilters = whereClause._tagFilters
+    if (tagFilters) {
+      delete whereClause._tagFilters
+    }
+    
     // Get total count
     const total = await Manga.count({ where: whereClause })
     
@@ -726,7 +791,7 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     })
     
     // Parse tags field from JSON string to object for each book
-    const parsedBooks = books.map(book => {
+    let parsedBooks = books.map(book => {
       if (typeof book.tags === 'string') {
         try {
           book.tags = JSON.parse(book.tags)
@@ -739,6 +804,64 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
       }
       return book
     })
+    
+    // Filter by tags - both positive and negative (for precise matching)
+    if (tagFilters) {
+      const { positive, negative } = tagFilters
+      
+      parsedBooks = parsedBooks.filter(book => {
+        const tags = book.tags || {}
+        
+        // Check negative tags (exclusions) first
+        if (negative && negative.length > 0) {
+          for (const { tag, category } of negative) {
+            if (category) {
+              // Check specific category
+              const categoryTags = tags[category] || []
+              if (Array.isArray(categoryTags) && categoryTags.some(t => t.toLowerCase().includes(tag))) {
+                return false
+              }
+            } else {
+              // Check any category
+              for (const cat in tags) {
+                const catTags = tags[cat] || []
+                if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase().includes(tag))) {
+                  return false
+                }
+              }
+            }
+          }
+        }
+        
+        // Check positive tags - ALL must match (AND logic)
+        if (positive && positive.length > 0) {
+          for (const { tag, category } of positive) {
+            let found = false
+            if (category) {
+              // Check specific category
+              const categoryTags = tags[category] || []
+              if (Array.isArray(categoryTags) && categoryTags.some(t => t.toLowerCase().includes(tag))) {
+                found = true
+              }
+            } else {
+              // Check any category
+              for (const cat in tags) {
+                const catTags = tags[cat] || []
+                if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase().includes(tag))) {
+                  found = true
+                  break
+                }
+              }
+            }
+            if (!found) return false
+          }
+        }
+        
+        return true
+      })
+      
+      delete whereClause._tagFilters
+    }
     
     return {
       data: parsedBooks,

@@ -7,6 +7,7 @@ const { spawn, execSync } = require('child_process')
 const http = require('http')
 const path = require('path')
 const fs = require('fs')
+const { getRootPath } = require('./utils.js')
 
 // PID 文件路径，用于记录子进程 PID
 const getPidFilePath = () => path.join(require('os').tmpdir(), 'exhentai-manga-manager-translation-pids.json')
@@ -170,7 +171,7 @@ class TranslationService {
     
     // 如果路径不存在，尝试默认路径
     if (!mangaTranslatorPath || !fs.existsSync(mangaTranslatorPath)) {
-      const rootPath = path.dirname(path.dirname(__dirname))
+      const rootPath = getRootPath()
       mangaTranslatorPath = path.join(rootPath, 'other_code', 'manga-image-translator')
       console.log('[翻译服务] 使用默认路径:', mangaTranslatorPath)
     }

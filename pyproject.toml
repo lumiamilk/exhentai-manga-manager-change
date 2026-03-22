@@ -1,0 +1,12 @@
+[project]
+name = "comic-reader-utils"
+version = "0.1.0"
+description = "Comic reader utility scripts"
+requires-python = ">=3.9"
+dependencies = [
+    "rich>=13.0.0",
+    "msgpack>=1.0.0",
+]
+
+[dependency-groups]
+dev = []

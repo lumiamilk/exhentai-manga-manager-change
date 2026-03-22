@@ -4,26 +4,14 @@ const path = require('path')
 const { getRootPath } = require('./utils.js')
 
 
-let STORE_PATH = app.getPath('userData')
-if (!fs.existsSync(STORE_PATH)) {
-  fs.mkdirSync(STORE_PATH)
-}
 const rootPath = getRootPath()
-let isPortable = false
-try {
-  const dataPath = path.join(rootPath, 'data')
-  fs.accessSync(dataPath)
-  STORE_PATH = dataPath
-  isPortable = true
-} catch {
-  try {
-    fs.accessSync(path.join(rootPath, 'portable'))
-    STORE_PATH = rootPath
-    isPortable = true
-  } catch {
-    STORE_PATH = app.getPath('userData')
-  }
+let isPortable = true
+// 默认使用项目根目录下的 data 文件夹
+const dataPath = path.join(rootPath, 'data')
+if (!fs.existsSync(dataPath)) {
+  fs.mkdirSync(dataPath, { recursive: true })
 }
+let STORE_PATH = dataPath
 
 const TEMP_PATH = path.join(STORE_PATH, 'tmp')
 const COVER_PATH = path.join(STORE_PATH, 'cover')
@@ -41,6 +29,8 @@ const prepareSetting = () => {
   
   // 默认翻译服务路径
   const defaultMangaTranslatorPath = path.join(rootPath, 'other_code', 'manga-image-translator')
+  const defaultLlamaServerPath = path.join(rootPath, 'other_code', 'llama-b8223-bin-win-cuda-12.4-x64', 'llama-server.exe')
+  const defaultLlamaModelPath = path.join(rootPath, 'models', 'GalTransl-v4-4B-2601.gguf')
   
   const defaultSetting = {
     proxy: undefined,
@@ -79,8 +69,8 @@ const prepareSetting = () => {
       autoStart: false,  // 应用启动时自动启动翻译服务
       mangaTranslatorPath: defaultMangaTranslatorPath,  // manga-image-translator 目录路径
       mangaTranslatorPort: 5000,
-      llamaServerPath: 'D:\\soft\\to_run\\ai\\chatai\\no_model\\llama-b8149-bin-win-cuda-12.4-x64\\llama-server.exe',
-      llamaModelPath: 'D:\\soft\\to_run\\ai\\chatai\\model\\GalTransl-v4-4B-2512.gguf',
+      llamaServerPath: defaultLlamaServerPath,
+      llamaModelPath: defaultLlamaModelPath,
       llamaPort: 8080,
       targetLang: 'CHS',
       useCloudAPI: false,

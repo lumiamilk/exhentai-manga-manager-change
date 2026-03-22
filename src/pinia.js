@@ -120,9 +120,12 @@ export const useAppStore = defineStore('appStore', {
           labelHeader = tagArray[0] === 'group' ? '团队' : state.resolvedTranslation[tagArray[0]]?.name || tagArray[0]
           labelTail = state.resolvedTranslation[tagArray[1]]?.name || tagArray[1]
         }
+        // Hitomi search syntax: namespace:tagname (no quotes or $ needed)
+        const namespaceMap = { l: 'language', p: 'parody', c: 'character', g: 'group', a: 'artist', f: 'female', m: 'male', x: 'mixed', o: 'other', cos: 'cosplayer' }
+        const namespace = namespaceMap[letter] || letter
         return {
           label: `${labelHeader}:${labelTail}`,
-          value: `${letter}:"${tagArray[1]}"$`
+          value: `${namespace}:${tagArray[1]}`
         }
       })
     },
@@ -149,20 +152,23 @@ export const useAppStore = defineStore('appStore', {
       })
     },
     tagListForSelect (state) {
+      const namespaceMap = { l: 'language', p: 'parody', c: 'character', g: 'group', a: 'artist', f: 'female', m: 'male', x: 'mixed', o: 'other', cos: 'cosplayer' }
       if (state.setting.showTranslation) {
         return state.tagListRaw.map(({letter, cat, tag}) => {
+          const namespace = namespaceMap[letter] || letter
           const labelHeader = cat === 'group' ? '团队' : state.resolvedTranslation[cat]?.name || cat
           const labelTail = state.resolvedTranslation[tag]?.name || tag
           return {
-            label: `${labelHeader}:${labelTail} || ${letter}:"${tag}"$`,
-            value: `${letter}:"${tag}"$`
+            label: `${labelHeader}:${labelTail} || ${namespace}:${tag}`,
+            value: `${namespace}:${tag}`
           }
         })
       } else {
         return state.tagListRaw.map(({letter, cat, tag}) => {
+          const namespace = namespaceMap[letter] || letter
           return {
-            label: `${cat}:${tag} || ${letter}:"${tag}"$`,
-            value: `${letter}:"${tag}"$`
+            label: `${cat}:${tag} || ${namespace}:${tag}`,
+            value: `${namespace}:${tag}`
           }
         })
       }

@@ -1,3 +1,9 @@
+# other_code - only keep manga-image-translator (code only)
+!other_code/manga-image-translator/
+other_code/manga-image-translator/.venv
+other_code/manga-image-translator/result
+other_code/manga-image-translator/models
+
 # Logs
 logs
 *.log
@@ -32,8 +38,7 @@ devtools
 ForAI.md
 ai-safe-workflow.ps1
 bug.txt
-other_code/
-# except manga-image-translator
 !other_code/manga-image-translator/
 other_code/manga-image-translator/.venv
 other_code/manga-image-translator/result
+other_code/manga-image-translator/models

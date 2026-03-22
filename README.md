@@ -4,7 +4,7 @@
 
 # exhentai-manga-manager
 
-> ⚠️ **本项目是 [SchneeHertz/exhentai-manga-manager](https://github.com/SchneeHertz/exhentai-manga-manager) v1.6.13 的硬分叉**，添加了 AI 漫画翻译等功能。
+> **本项目是 [SchneeHertz/exhentai-manga-manager](https://github.com/SchneeHertz/exhentai-manga-manager) v1.6.13 的硬分叉**，添加了 AI 漫画翻译等功能。
 
 **标签化管理, 阅读从ExHentai下载的短篇漫画**
 
@@ -77,12 +77,31 @@
 ## 贡献
 - 请参考[贡献指南](https://github.com/SchneeHertz/exhentai-manga-manager/blob/master/CONTRIBUTING.md)
 
+---
+
 ## AI 漫画翻译功能
 
 从 v1.0.14 开始支持 AI 实时翻译日语漫画为中文。
 
+### 架构说明
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                 exhentai-manga-manager                      │
+│  [自动翻译: ON] ──▶ 启动两个后台服务                         │
+└─────────────────────────────────────────────────────────────┘
+               │                          │
+               ▼                          ▼
+┌──────────────────────┐    ┌──────────────────────┐
+│  manga-image-        │    │  llama-server.exe    │
+│  translator          │    │  GalTransl-v4-4B     │
+│  (OCR + Inpaint)     │    │  (日译中 LLM)        │
+│  端口: 5000          │    │  端口: 8080          │
+└──────────────────────┘    └──────────────────────┘
+```
+
 ### 环境要求
-- NVIDIA GPU (RTX 2080 Ti 或更高，22GB 显存)
+- NVIDIA GPU (RTX 2080 Ti 22GB 或更高)
 - llama-server (本地 LLM 服务)
 - manga-image-translator (漫画 OCR + 翻译)
 
@@ -119,9 +138,11 @@ uv venv --python 3.9
 
 需要下载以下模型到 `other_code/manga-image-translator/models/` 目录：
 
-- **OCR**: `manga-ocr-full.ckpt`
-- **Detection**: `craft_mixed.onnx`
-- **Inpainting**: `lama_mpe.ckpt` (可选)
+| 模型 | 文件名 | 用途 |
+|------|--------|------|
+| OCR | `manga-ocr-full.ckpt` | 日文文字识别 |
+| Detection | `craft_mixed.onnx` | 文本检测 |
+| Inpainting | `lama_mpe.ckpt` | 图像修复 (可选) |
 
 详见 [manga-image-translator 安装说明](other_code/manga-image-translator/INSTALL.md)
 
@@ -129,17 +150,61 @@ uv venv --python 3.9
 
 推荐使用 [GalTransl-v4-4B](https://huggingface.co/2bb6bf1d14/GalTransl-v4-4B-gguf) 或其他日译中模型。
 
-### 配置
+将模型文件放入 `models/` 目录，例如：
+- `models/GalTransl-v4-4B-2601.gguf`
 
-1. 启动 llama-server (翻译后端)：
+### 启动应用
+
 ```powershell
-llama-server.exe -m GalTransl-v4-4B-2512.gguf -ngl 99 -c 4096 --port 8080
+cd exhentai-manga-manager
+npm run start
 ```
 
-2. 在应用设置中启用自动翻译，配置：
-   - manga-translator 路径: `other_code/manga-image-translator`
-   - llama-server 路径: 你的 llama-server.exe 路径
-   - 目标语言: CHS (简体中文)
+### 配置翻译服务
+
+1. 在应用设置中找到"翻译设置"区域
+2. 配置以下路径：
+   - **manga-translator 路径**: `other_code/manga-image-translator`
+   - **llama-server 路径**: 你的 llama-server.exe 路径
+   - **LLM 模型路径**: `models/GalTransl-v4-4B-2601.gguf`
+3. 启用"自动翻译"开关
+4. （可选）启用"应用启动时自动启动服务"
+
+### 翻译功能特性
+
+- **自动检测日语漫画**: 通过元数据 `language: japanese` 标签自动识别
+- **智能翻译队列**: 优先翻译当前阅读页面及其前后几页
+- **翻译缓存**: 已翻译的页面自动缓存，下次阅读无需重新翻译
+- **GPU 加速**: llama-server 和 manga-image-translator 均使用 GPU 加速
+- **进程管理**: 应用退出时自动清理后台进程，释放显存
+
+### 常见问题
+
+**Q: 翻译服务启动后显存占用多少？**
+A: 约 15GB（manga-image-translator ~8GB + llama-server ~7GB）
+
+**Q: 翻译一页需要多长时间？**
+A: 约 5-15 秒，取决于图片复杂度和 GPU 性能
+
+**Q: 支持哪些翻译目标语言？**
+A: 目前支持简体中文 (CHS)、繁体中文 (CHT)、英文 (ENG) 等
+
+---
+
+## Python 辅助脚本
+
+项目包含两个 Python 辅助脚本，使用 uv 管理依赖：
+
+```powershell
+# 转换漫画为 CBZ 格式
+uv run python convert_to_cbz.py <漫画目录> --output <输出目录>
+
+# 按语言筛选漫画 (保留中文、日文，删除其他语言)
+uv run python filter_comics_by_language.py <漫画目录> --dry-run  # 预览
+uv run python filter_comics_by_language.py <漫画目录> --execute  # 执行删除
+```
+
+---
 
 ## Thanks
 本项目受到了诸多开源项目的帮助
