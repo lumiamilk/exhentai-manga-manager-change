@@ -3,6 +3,15 @@
 other_code/manga-image-translator/.venv
 other_code/manga-image-translator/result
 other_code/manga-image-translator/models
+other_code/llama-*
+other_code/gallery-dl
+other_code/komga
+other_code/convert_to_cbz.py
+
+# Models - exclude large model files
+models/*.gguf
+models/*.bin
+models/*.safetensors
 
 # Logs
 logs
@@ -38,7 +47,6 @@ devtools
 ForAI.md
 ai-safe-workflow.ps1
 bug.txt
-!other_code/manga-image-translator/
-other_code/manga-image-translator/.venv
-other_code/manga-image-translator/result
-other_code/manga-image-translator/models
+failed_comics_*.txt
+convert_to_cbz_context.md
+install-mcp.ps1
