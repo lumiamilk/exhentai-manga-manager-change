@@ -1703,11 +1703,7 @@ ipcMain.handle('post-data-ex', async (event, { url, data }) => {
     return null
   }
 })
-    })
-  } else {
-    return await fetch(url, {
-      method: 'POST',
-      body: JSON.stringify(data),
+
 ipcMain.handle('save-book', async (event, book) => {
   return await saveBookToDatabase(book)
 })
