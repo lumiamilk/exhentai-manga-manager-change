@@ -1075,6 +1075,7 @@ export default defineComponent({
     },
     async searchBook (addToHistory = true) {
       const searchStr = this.searchString?.trim()
+      console.log('[Frontend Search] searchStr:', searchStr)
       
       // If there's a search string, use backend search for better performance and correct results
       if (searchStr) {
@@ -1095,6 +1096,7 @@ export default defineComponent({
         
         try {
           const result = await ipcRenderer.invoke('load-book-list-paged', paginationParams)
+          console.log('[Frontend Search] result:', result?.total, 'books')
           
           if (result && result.data) {
             result.data.forEach(book => {
@@ -1286,7 +1288,9 @@ export default defineComponent({
           return
         }
         
-        this.searchString = `${namespace}:${tag}`
+        // Quote tag if it contains spaces (for proper parsing)
+        const quotedTag = tag.includes(' ') ? `"${tag}"` : tag
+        this.searchString = `${namespace}:${quotedTag}`
       } else {
         this.searchString = tag
       }

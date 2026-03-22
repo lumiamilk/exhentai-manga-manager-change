@@ -672,6 +672,8 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     // Build where clause from filters
     const whereClause = { exist: true }
     
+    console.log('[Search] filters:', JSON.stringify(filters))
+    
     // Apply filters - Hitomi.la search syntax:
     // - tagname: search for tag in any category
     // - namespace:tagname: search for tag in specific category (artist, group, series, type, character, female, male, language)
@@ -681,62 +683,60 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
       const searchConditions = []
       const searchStr = filters.searchString.trim()
       
-      // Split by spaces
-      const tokens = searchStr.split(/\s+/)
+      console.log('[Search] searchString:', searchStr)
+      
+      // Parse search string using regex to handle namespace:tag format
+      // Pattern: [-]namespace:"tag with spaces" or [-]namespace:tag or -tag or tag
+      // Regex matches: optional minus, optional namespace:, then tag (quoted or not)
+      const tokenRegex = /(-)?([a-zA-Z]+:)?("[^"]*"+|[^\s]+)/g
       const positiveTags = []
       const negativeTags = []
+      const searchKeywords = [] // Keywords for LIKE search
       
-      for (const token of tokens) {
-        if (!token) continue
+      let match
+      while ((match = tokenRegex.exec(searchStr)) !== null) {
+        const isNegative = !!match[1]
+        const namespacePart = match[2] // e.g., "female:" or undefined
+        let tagPart = match[3] // e.g., "big breasts" or big
         
-        if (token.startsWith('-')) {
-          // Negative tag (exclusion)
-          const negToken = token.slice(1)
-          if (negToken.includes(':')) {
-            const colonIndex = negToken.indexOf(':')
-            const namespace = negToken.slice(0, colonIndex).toLowerCase()
-            const tag = negToken.slice(colonIndex + 1).toLowerCase()
-            negativeTags.push({ tag, category: namespace })
-          } else {
-            negativeTags.push({ tag: negToken.toLowerCase(), category: null })
-          }
-        } else if (token.includes(':')) {
-          // Namespace:tagname format
-          const colonIndex = token.indexOf(':')
-          const namespace = token.slice(0, colonIndex).toLowerCase()
-          const tag = token.slice(colonIndex + 1).toLowerCase()
-          positiveTags.push({ tag, category: namespace })
+        if (!tagPart) continue
+        
+        const namespace = namespacePart ? namespacePart.slice(0, -1).toLowerCase() : null
+        // Remove quotes from tag
+        const tag = tagPart.toLowerCase().replace(/^"+|"+$/g, '')
+        
+        if (isNegative) {
+          negativeTags.push({ tag, category: namespace })
         } else {
-          // Simple tag search (search in all categories)
-          positiveTags.push({ tag: token.toLowerCase(), category: null })
+          positiveTags.push({ tag, category: namespace })
+          // Add tag to search keywords (without namespace prefix)
+          searchKeywords.push(tag)
         }
       }
       
-      // Build search conditions - search in title/filepath only for basic search
-      // Tags will be filtered in frontend for precise matching
-      const lowerSearchStr = searchStr.toLowerCase()
+      // Build search conditions - search in title/filepath/tags
+      // For tags field, search each keyword separately
       searchConditions.push(
-        { title: { [Op.like]: `%${lowerSearchStr}%` } },
-        { title_jpn: { [Op.like]: `%${lowerSearchStr}%` } },
-        { filepath: { [Op.like]: `%${lowerSearchStr}%` } }
+        { title: { [Op.like]: `%${searchStr.toLowerCase()}%` } },
+        { title_jpn: { [Op.like]: `%${searchStr.toLowerCase()}%` } },
+        { filepath: { [Op.like]: `%${searchStr.toLowerCase()}%` } }
       )
       
-      // For tag search, we need to do frontend filtering for precision
-      // But we can still use a broad LIKE to get candidate results
-      // Add a broad tag search condition that will include candidates
-      const allSearchTags = [
-        ...positiveTags.map(t => t.tag),
-        ...negativeTags.map(t => t.tag)
-      ]
-      for (const tag of allSearchTags) {
-        // Use a more restrictive pattern: search for tag with word boundaries
-        // This helps avoid matching "female" when searching "fox"
+      // Add tag search conditions for each keyword
+      for (const keyword of searchKeywords) {
         searchConditions.push(
-          { tags: { [Op.like]: `%${tag}%` } }
+          Manga.sequelize.where(
+            Manga.sequelize.fn('LOWER', Manga.sequelize.col('tags')),
+            { [Op.like]: `%"${keyword}"%` }
+          )
         )
       }
       
       whereClause[Op.or] = searchConditions
+      
+      console.log('[Search] positiveTags:', positiveTags)
+      console.log('[Search] negativeTags:', negativeTags)
+      console.log('[Search] searchKeywords:', searchKeywords)
       
       // Store tags for frontend filtering
       if (positiveTags.length > 0 || negativeTags.length > 0) {
@@ -786,6 +786,7 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     
     // Get total count
     const total = await Manga.count({ where: whereClause })
+    console.log('[Search] total count:', total)
     
     // Get paged data with hard limit
     const books = await Manga.findAll({
@@ -795,6 +796,10 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
       offset: offset,
       raw: true
     })
+    console.log('[Search] books found:', books.length)
+    if (books.length > 0) {
+      console.log('[Search] first book title:', books[0].title)
+    }
     
     // Parse tags field from JSON string to object for each book
     let parsedBooks = books.map(book => {
@@ -1273,7 +1278,7 @@ const performLibraryScan = async () => {
           for (const tag of hitomiMeta.tags || []) {
             if (!tag || naPatterns.has(tag.toLowerCase())) continue
             if (tag.startsWith('female:')) femaleTags.push(tag.substring(7))
-            else if (tag.startsWith('male:')) maleTags.push(tag.substring(6))
+            else if (tag.startsWith('male:')) maleTags.push(tag.substring(5))
             else if (tag.startsWith('tag:')) otherTags.push(tag.substring(4))
             else otherTags.push(tag)
           }
@@ -2465,7 +2470,7 @@ ipcMain.handle('import-from-hitomi', async (event, bookList) => {
         if (tag.startsWith('female:')) {
           femaleTags.push(tag.substring(7))
         } else if (tag.startsWith('male:')) {
-          maleTags.push(tag.substring(6))
+          maleTags.push(tag.substring(5))
         } else if (tag.startsWith('tag:')) {
           otherTags.push(tag.substring(4))
         } else {

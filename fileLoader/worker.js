@@ -74,7 +74,7 @@ const getHitomiMetadata = async (comicId) => {
             for (const tag of (item.t || [])) {
               if (!tag) continue
               if (tag.startsWith('female:')) femaleTags.push(tag.substring(7))
-              else if (tag.startsWith('male:')) maleTags.push(tag.substring(6))
+              else if (tag.startsWith('male:')) maleTags.push(tag.substring(5))
               else if (tag.startsWith('tag:')) otherTags.push(tag.substring(4))
               else otherTags.push(tag)
             }
