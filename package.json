@@ -14,7 +14,7 @@
     "dev:electron": "electron .",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "chcp 65001 && electron .",
+    "start": "chcp 65001 && vite build && electron .",
     "pack": "electron-builder --dir",
     "dist": "auto-changelog && vite build && electron-builder"
   },

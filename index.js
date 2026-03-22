@@ -362,7 +362,13 @@ const createWindow = () => {
   if (app.isPackaged) {
     win.loadFile('dist/index.html')
   } else {
-    win.loadURL('http://localhost:5374')
+    // 非打包模式下，检查 dist 目录是否存在
+    const distPath = path.join(__dirname, 'dist/index.html')
+    if (fs.existsSync(distPath)) {
+      win.loadFile('dist/index.html')
+    } else {
+      win.loadURL('http://localhost:5374')
+    }
   }
   win.setMenuBarVisibility(false)
   win.setAutoHideMenuBar(true)
