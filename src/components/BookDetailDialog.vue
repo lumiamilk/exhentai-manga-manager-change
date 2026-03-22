@@ -136,9 +136,22 @@
       </el-col>
       <el-col :span="8" v-if="setting.showComment">
         <el-scrollbar class="book-comment-frame">
+          <div v-if="commentLoading" class="comment-loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span>搜索多版本评论中...</span>
+          </div>
           <div class="book-comment" v-for="comment in comments" :key="comment.id">
-            <div class="book-comment-postby">{{comment.author}}<span class="book-comment-score">{{comment.score}}</span></div>
+            <div class="book-comment-postby">
+              {{comment.author}}
+              <span class="book-comment-score">{{comment.score}}</span>
+              <span v-if="comment.sourceLanguage" class="comment-source" :class="'lang-' + comment.sourceLanguage">
+                {{ comment.sourceLanguage === 'chinese' ? '汉化' : comment.sourceLanguage === 'english' ? '英文' : '' }}
+              </span>
+            </div>
             <p class="book-comment-content" @contextmenu="onMangaCommentContextMenu($event, comment)">{{comment.content}}</p>
+          </div>
+          <div v-if="!commentLoading && comments.length === 0" class="no-comments">
+            暂无评论
           </div>
         </el-scrollbar>
       </el-col>
@@ -152,6 +165,7 @@ import { useI18n } from 'vue-i18n'
 import { ElMessageBox } from 'element-plus'
 import { CaretRight20Regular, CaretLeft20Regular } from '@vicons/fluent'
 import { BookmarkTwotone } from '@vicons/material'
+import { Loading } from '@element-plus/icons-vue'
 import { nanoid } from 'nanoid'
 import he from 'he'
 import * as linkify from 'linkifyjs'
@@ -298,17 +312,96 @@ const deleteLocalBook = (book) => {
 }
 
 const comments = ref([])
+const commentLoading = ref(false)
 const triggerShowComment = () => {
   if (setting.value.showComment) {
     setting.value.showComment = false
   } else {
     comments.value = []
-    getComments(bookDetail.value.url)
+    commentLoading.value = true
+    // Use multi-version comment loading
+    getMultiVersionComments()
     setting.value.showComment = true
   }
 }
+
+// Multi-version comment loading with language priority (Chinese > English)
+const getMultiVersionComments = async () => {
+  const title = bookDetail.value.title_jpn || bookDetail.value.title || ''
+  const existingUrl = bookDetail.value.url
+  
+  if (!title && !existingUrl) {
+    comments.value = []
+    commentLoading.value = false
+    return
+  }
+  
+  try {
+    // Step 1: Search for all versions of this manga
+    const searchResult = await ipcRenderer.invoke('search-galleries-for-comments', {
+      title,
+      existingUrl,
+      cookie: appStore.cookie
+    })
+    
+    if (!searchResult.galleries || searchResult.galleries.length === 0) {
+      comments.value = []
+      commentLoading.value = false
+      return
+    }
+    
+    // Step 2: Get comments from all found galleries
+    const commentResult = await ipcRenderer.invoke('get-multi-gallery-comments', {
+      urls: searchResult.galleries,
+      cookie: appStore.cookie
+    })
+    
+    if (!commentResult.comments) {
+      comments.value = []
+      commentLoading.value = false
+      return
+    }
+    
+    // Step 3: Process and deduplicate comments
+    comments.value = []
+    const seenContent = new Set()
+    
+    for (const comment of commentResult.comments) {
+      // Deduplicate by content (first 100 chars)
+      const contentKey = comment.content.slice(0, 100).trim()
+      if (seenContent.has(contentKey)) continue
+      seenContent.add(contentKey)
+      
+      // Extract links from content
+      const foundLink = _.uniqBy(linkify.find(comment.content.replace(/[<"]/gi, ' '), 'url'), 'href')
+      
+      comments.value.push({
+        author: comment.author,
+        score: comment.score,
+        content: comment.content,
+        foundLink,
+        id: comment.id,
+        sourceTitle: comment.sourceTitle,
+        sourceLanguage: comment.sourceLanguage
+      })
+    }
+    
+    commentLoading.value = false
+  } catch (err) {
+    console.log('Multi-version comment loading failed:', err)
+    // Fallback to single URL loading
+    if (existingUrl) {
+      getComments(existingUrl)
+    } else {
+      comments.value = []
+      commentLoading.value = false
+    }
+  }
+}
+
 const getComments = (url) => {
   if (url) {
+    commentLoading.value = true
     ipcRenderer.invoke('get-ex-webpage', {
       url,
       cookie: appStore.cookie
@@ -329,13 +422,16 @@ const getComments = (url) => {
           author, score, content, id: nanoid(), foundLink
         })
       })
+      commentLoading.value = false
     })
     .catch(err => {
       comments.value = []
+      commentLoading.value = false
       console.log(err)
     })
   } else {
     comments.value = []
+    commentLoading.value = false
   }
 }
 
@@ -605,15 +701,43 @@ defineExpose({
   height: calc(100vh - 100px)
   overflow-y: auto
   padding-right: 10px
+  .comment-loading
+    display: flex
+    align-items: center
+    justify-content: center
+    gap: 8px
+    padding: 20px
+    color: var(--el-text-color-secondary)
+    .el-icon
+      font-size: 18px
+  .no-comments
+    text-align: center
+    padding: 40px 20px
+    color: var(--el-text-color-secondary)
   .book-comment
     .book-comment-postby
       font-size: 12px
       background-color: var(--el-fill-color-dark)
       padding-left: 4px
       color: var(--el-text-color-regular)
+      display: flex
+      align-items: center
+      flex-wrap: wrap
+      gap: 4px
     .book-comment-score
-      float: right
+      margin-left: auto
       margin-right: 4px
+    .comment-source
+      font-size: 10px
+      padding: 1px 4px
+      border-radius: 3px
+      margin-left: 4px
+      &.lang-chinese
+        background-color: #e74c3c
+        color: #fff
+      &.lang-english
+        background-color: #3498db
+        color: #fff
     .book-comment-content
       font-size: 14px
       white-space: pre-wrap
