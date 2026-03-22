@@ -45,7 +45,7 @@ const prepareSetting = () => {
     ipb_pass_hash: '',
     ipb_member_id: '',
     star: '',
-    showComment: true,
+    showComment: false,  // 默认关闭评论显示，避免每次打开详情页都发起网络请求
     requireGap: 3000,
     thumbnailColumn: 10,
     showTranslation: false,
