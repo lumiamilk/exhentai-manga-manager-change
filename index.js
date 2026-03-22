@@ -134,6 +134,48 @@ const setUserActive = () => {
 // Sleep helper
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
 
+// Fetch with retry and timeout for unstable connections
+const fetchWithRetry = async (url, options = {}, maxRetries = 3, timeoutMs = 30000) => {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  
+  const optionsWithSignal = {
+    ...options,
+    signal: controller.signal
+  }
+  
+  let lastError = null
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, optionsWithSignal)
+      clearTimeout(timeout)
+      return response
+    } catch (e) {
+      clearTimeout(timeout)
+      lastError = e
+      
+      // Check if it's a retryable error
+      const isRetryable = 
+        e.name === 'AbortError' || // Timeout
+        e.code === 'ECONNRESET' ||
+        e.code === 'ETIMEDOUT' ||
+        e.code === 'ENOTFOUND' ||
+        e.message?.includes('TLS') ||
+        e.message?.includes('socket disconnected') ||
+        e.message?.includes('ECONNREFUSED')
+      
+      if (isRetryable && attempt < maxRetries) {
+        const delay = attempt * 2000 // Exponential backoff: 2s, 4s, 6s
+        console.log(`[Fetch] Attempt ${attempt}/${maxRetries} failed for ${url}, retrying in ${delay}ms... (${e.message || e})`)
+        await sleep(delay)
+      } else {
+        throw e
+      }
+    }
+  }
+  throw lastError
+}
+
 // Worker thread pool for metadata resolution
 const metadataWorkers = new Map()
 let workerIdCounter = 0
@@ -1621,67 +1663,51 @@ ipcMain.handle('get-ehviewer-data', async (event, dir) => {
 })
 
 ipcMain.handle('get-ex-webpage', async (event, { url, cookie }) => {
-  if (setting.proxy) {
-    return await fetch(url, {
-      headers: {
-        Cookie: cookie
-      },
-      agent: new HttpsProxyAgent(setting.proxy)
-    })
-    .then(async res => {
-      const result = await res.text()
-      if (!result) throw new Error('Empty response, maybe the cookie is expired')
-      return result
-    })
-    .catch(e => {
-      sendMessageToWebContents(`Get ex page failed because ${e}`)
-    })
-  } else {
-    return await fetch(url, {
+  try {
+    const options = {
       headers: {
         Cookie: cookie
       }
-    })
-    .then(async res => {
-      const result = await res.text()
-      if (!result) throw new Error('Empty response, maybe the cookie is expired')
-      return result
-    })
-    .catch(e => {
-      sendMessageToWebContents(`Get ex page failed because ${e}`)
-    })
+    }
+    if (setting.proxy) {
+      options.agent = new HttpsProxyAgent(setting.proxy)
+    }
+    
+    const res = await fetchWithRetry(url, options, 3, 30000)
+    const result = await res.text()
+    if (!result) throw new Error('Empty response, maybe the cookie is expired')
+    return result
+  } catch (e) {
+    sendMessageToWebContents(`Get ex page failed because ${e}`)
+    return null
   }
 })
 
 ipcMain.handle('post-data-ex', async (event, { url, data }) => {
-  if (setting.proxy) {
-    return await fetch(url, {
-      method: 'POST',
-      body: JSON.stringify(data),
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      agent: new HttpsProxyAgent(setting.proxy)
-    })
-    .then(res => res.text())
-    .catch(e => {
-      sendMessageToWebContents(`Get ex data failed because ${e}`)
-    })
-  } else {
-    return await fetch(url, {
+  try {
+    const options = {
       method: 'POST',
       body: JSON.stringify(data),
       headers: {
         'Content-Type': 'application/json'
       }
-    })
-    .then(res => res.text())
-    .catch(e => {
-      sendMessageToWebContents(`Get ex data failed because ${e}`)
-    })
+    }
+    if (setting.proxy) {
+      options.agent = new HttpsProxyAgent(setting.proxy)
+    }
+    
+    const res = await fetchWithRetry(url, options, 3, 30000)
+    return await res.text()
+  } catch (e) {
+    sendMessageToWebContents(`Get ex data failed because ${e}`)
+    return null
   }
 })
-
+    })
+  } else {
+    return await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify(data),
 ipcMain.handle('save-book', async (event, book) => {
   return await saveBookToDatabase(book)
 })
