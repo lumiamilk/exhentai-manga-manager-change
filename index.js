@@ -23,6 +23,7 @@ const { prepareTemplate } = require('./modules/prepare_menu.js')
 const { getBookFilelist, geneCover, getImageListByBook, deleteImageFromBook } = require('./fileLoader/index.js')
 const { STORE_PATH, isPortable, TEMP_PATH, COVER_PATH, VIEWER_PATH, prepareSetting, prepareCollectionList, preparePath } = require('./modules/init_folder_setting.js')
 const { findSameFile } = require('./fileLoader/folder.js')
+const { getModelStatus, downloadRequiredModels, generateDownloadGuide } = require('./modules/modelDownloader')
 
 // ============================================================================
 // WORKER THREAD MANAGEMENT
@@ -1708,6 +1709,34 @@ ipcMain.handle('post-data-ex', async (event, { url, data }) => {
 
 ipcMain.handle('save-book', async (event, book) => {
   return await saveBookToDatabase(book)
+})
+
+// Model download operations
+ipcMain.handle('get-model-status', async (event) => {
+  try {
+    const status = getModelStatus(STORE_PATH)
+    return status
+  } catch (e) {
+    console.log('Get model status failed:', e)
+    return null
+  }
+})
+
+ipcMain.handle('download-ocr-models', async (event) => {
+  try {
+    const modelsPath = path.join(STORE_PATH, 'manga-image-translator', 'models')
+    const result = await downloadRequiredModels(modelsPath, (msg) => {
+      sendMessageToWebContents(msg)
+    })
+    return result
+  } catch (e) {
+    console.log('Download OCR models failed:', e)
+    return { downloaded: [], failed: [{ name: 'unknown', error: e.message }] }
+  }
+})
+
+ipcMain.handle('get-download-guide', async (event) => {
+  return generateDownloadGuide()
 })
 
 // Comment cache operations

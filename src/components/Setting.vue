@@ -636,6 +636,51 @@
               </div>
             </el-col>
           </el-row>
+          <!-- 模型状态显示 -->
+          <el-row :gutter="20" v-if="setting.translation?.enabled" style="margin-top: 16px;">
+            <el-col :span="24">
+              <el-card class="model-status-card">
+                <template #header>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>翻译模型状态</span>
+                    <el-button size="small" @click="checkModelStatus">刷新</el-button>
+                  </div>
+                </template>
+                <el-descriptions :column="2" border size="small">
+                  <el-descriptions-item label="OCR 模型">
+                    <el-tag :type="modelStatus.ocrReady ? 'success' : 'danger'" size="small">
+                      {{ modelStatus.ocrReady ? '已就绪' : '未安装' }}
+                    </el-tag>
+                    <el-button v-if="!modelStatus.ocrReady" size="small" type="primary" text @click="downloadOcrModels">
+                      下载
+                    </el-button>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="Python 环境">
+                    <el-tag :type="modelStatus.pythonEnv ? 'success' : 'danger'" size="small">
+                      {{ modelStatus.pythonEnv ? '已配置' : '未配置' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="LLM 模型">
+                    <el-tag :type="modelStatus.llmModels ? 'success' : 'warning'" size="small">
+                      {{ modelStatus.llmModels ? '已安装' : '未安装 (手动下载)' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="llama.cpp">
+                    <el-tag :type="modelStatus.llamaCpp?.exists ? 'success' : 'warning'" size="small">
+                      {{ modelStatus.llamaCpp?.exists ? '已安装' : '未安装' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                </el-descriptions>
+                <div v-if="!modelStatus.translationReady" style="margin-top: 12px;">
+                  <el-alert type="info" :closable="false">
+                    <template #title>
+                      <span style="font-size: 12px;">首次使用翻译功能需要下载约 500MB 的 OCR 模型。</span>
+                    </template>
+                  </el-alert>
+                </div>
+              </el-card>
+            </el-col>
+          </el-row>
         </div>
         <div v-show="activeSettingPanel === 'about'" class="setting-panel">
           <el-descriptions :column="1">
@@ -1038,6 +1083,48 @@ ipcRenderer.on('translation-service-status', (event, status) => {
   } else if (status.type === 'error') {
     translationServiceStatus.value = { isRunning: false }
   }
+})
+
+// 模型状态相关
+const modelStatus = ref({
+  ocrReady: false,
+  pythonEnv: false,
+  llmModels: false,
+  llamaCpp: { exists: false },
+  translationReady: false
+})
+
+const checkModelStatus = async () => {
+  try {
+    const status = await ipcRenderer.invoke('get-model-status')
+    if (status) {
+      modelStatus.value = status
+    }
+  } catch (e) {
+    console.log('Failed to check model status:', e)
+  }
+}
+
+const downloadOcrModels = async () => {
+  printMessage('info', '开始下载 OCR 模型...')
+  try {
+    const result = await ipcRenderer.invoke('download-ocr-models')
+    if (result.downloaded.length > 0) {
+      printMessage('success', `成功下载 ${result.downloaded.length} 个模型`)
+    }
+    if (result.failed.length > 0) {
+      printMessage('error', `${result.failed.length} 个模型下载失败`)
+    }
+    // 刷新状态
+    await checkModelStatus()
+  } catch (e) {
+    printMessage('error', '模型下载失败: ' + e.message)
+  }
+}
+
+// 初始化时检查模型状态
+onMounted(() => {
+  checkModelStatus()
 })
 
 const openLink = (link) => {

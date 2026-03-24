@@ -16,7 +16,9 @@
     "preview": "vite preview",
     "start": "chcp 65001 && vite build && electron .",
     "pack": "electron-builder --dir",
-    "dist": "auto-changelog && vite build && electron-builder"
+    "dist": "auto-changelog && vite build && electron-builder",
+    "dist:basic": "vite build && electron-builder -c.win.target=nsis -c.extraResources=[] -c.directories.output=out-basic",
+    "dist:full": "powershell -ExecutionPolicy Bypass -File build-release-full.ps1"
   },
   "build": {
     "appId": "electron.e-hentai.tagger",
