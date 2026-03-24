@@ -5,9 +5,6 @@ on:
     tags:
       - 'v*'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build-basic:
     name: Build Basic Version
@@ -15,19 +12,21 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: '20'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
-      - name: Build and package
-        run: npm run dist:basic
+      - name: Build frontend
+        run: npm run build
+
+      - name: Package with electron-builder
+        run: npx electron-builder --win nsis --x64 --config.directories.output=out-basic --config.extraResources=[]
 
       - name: Get version from tag
         id: get_version
@@ -40,8 +39,8 @@ jobs:
           name: exhentai-manga-manager-basic-${{ steps.get_version.outputs.VERSION }}
           path: |
             out-basic/*.exe
-            out-basic/*.zip
           retention-days: 1
+          if-no-files-found: warn
 
   release:
     name: Create Release
@@ -49,9 +48,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
