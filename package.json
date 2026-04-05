@@ -1,12 +1,12 @@
 {
-  "name": "exhentai-manga-manager",
+  "name": "exhentai-manga-manager-change",
   "private": true,
   "version": "1.6.14",
-  "author": "SchneeHertz",
-  "description": "Tag-based management, reading manga downloaded from ExHentai",
+  "author": "lumiamilk",
+  "description": "Tag-based management, reading manga downloaded from ExHentai with AI translation support",
   "repository": {
     "type": "git",
-    "url": "https://github.com/SchneeHertz/exhentai-manga-manager.git"
+    "url": "https://github.com/lumiamilk/exhentai-manga-manager-change.git"
   },
   "scripts": {
     "dev": "concurrently -k \"vite\" \"cross-env WAIT_ON_TIMEOUT=60000 wait-on http://localhost:5374 && electron .\"",

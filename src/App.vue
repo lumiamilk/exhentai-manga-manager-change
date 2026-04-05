@@ -1099,6 +1099,8 @@ export default defineComponent({
           console.log('[Frontend Search] result:', result?.total, 'books')
           
           if (result && result.data) {
+            console.log('[Frontend] Setting chunkDisplayBookList, count:', result.data.length)
+            
             result.data.forEach(book => {
               if (Number.isInteger(book.filecount) && Number.isInteger(book.pageCount) && Math.abs(book.filecount - book.pageCount) > 5) {
                 book.pageDiff = true
@@ -1107,7 +1109,9 @@ export default defineComponent({
             
             this.bookList = result.data
             this.displayBookList = result.data
+            this.$pinia.state.bookList = result.data
             this.chunkDisplayBookList = result.data
+            this.$pinia.state.chunkDisplayBookList = result.data
             this.totalBookCount = result.total
             this.pagination.page = 1
             this.lockedTotalForUI = result.total
@@ -1402,6 +1406,8 @@ export default defineComponent({
           this.bookList = result.data
           this.displayBookList = result.data
           this.chunkDisplayBookList = result.data
+          this.$pinia.state.bookList = result.data
+          this.$pinia.state.chunkDisplayBookList = result.data
           this.pagination.page = currentPage
         }
       } catch (e) {

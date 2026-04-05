@@ -369,6 +369,7 @@ export const useAppStore = defineStore('appStore', {
           
           this.bookList = result.data
           this.displayBookList = result.data
+          this.chunkDisplayBookList = result.data
           this.totalBookCount = result.total
           
           console.log(`Loaded page ${result.page}/${result.totalPages}, total: ${result.total}`)

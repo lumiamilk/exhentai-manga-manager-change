@@ -21,8 +21,8 @@
 ### 设置步骤
 1. Fork 这个仓库并克隆到本地：
    ```bash
-   git clone https://github.com/SchneeHertz/exhentai-manga-manager.git
-   cd exhentai-manga-manager
+   git clone https://github.com/lumiamilk/exhentai-manga-manager-change.git
+   cd exhentai-manga-manager-change
    ```
 
 2. 安装依赖：
@@ -118,7 +118,7 @@ npm run dist
 
 ## 资源
 
-- [项目 README](https://github.com/SchneeHertz/exhentai-manga-manager#readme)
+- [项目 README](https://github.com/lumiamilk/exhentai-manga-manager-change#readme)
 - [Vue 3 文档](https://vuejs.org/)
 - [Electron 文档](https://www.electronjs.org/docs)
 - [Element Plus 文档](https://element-plus.org/)

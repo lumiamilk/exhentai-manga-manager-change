@@ -18,15 +18,15 @@
   <a href="#">
     <img src="https://img.shields.io/badge/require-Windows_10-blue?style=flat-square" alt="Windows_10" />
   </a>
-  <a href="https://github.com/SchneeHertz/exhentai-manga-manager/stargazers">
-    <img src="https://img.shields.io/github/stars/SchneeHertz/exhentai-manga-manager?style=flat-square&color=cornflowerblue" alt="Github Stars" />
+  <a href="https://github.com/lumiamilk/exhentai-manga-manager-change/stargazers">
+    <img src="https://img.shields.io/github/stars/lumiamilk/exhentai-manga-manager-change?style=flat-square&color=cornflowerblue" alt="Github Stars" />
   </a>
-  <a href="https://github.com/SchneeHertz/exhentai-manga-manager/releases/latest">
-    <img src="https://img.shields.io/github/v/release/SchneeHertz/exhentai-manga-manager?label=latest&style=flat-square&color=cornflowerblue" alt="Github Stable Release" />
+  <a href="https://github.com/lumiamilk/exhentai-manga-manager-change/releases/latest">
+    <img src="https://img.shields.io/github/v/release/lumiamilk/exhentai-manga-manager-change?label=latest&style=flat-square&color=cornflowerblue" alt="Github Stable Release" />
   </a>
 </p>
 
-中文介绍 | [English Readme](https://github.com/SchneeHertz/exhentai-manga-manager/blob/master/README_EN.md) | [日本語の説明](https://github.com/SchneeHertz/exhentai-manga-manager/blob/master/README_JA.md)
+中文介绍
 
 
 **[使用说明](https://github.com/SchneeHertz/exhentai-manga-manager/wiki/中文说明)** | **[FAQ](https://github.com/SchneeHertz/exhentai-manga-manager/wiki/FAQ)**

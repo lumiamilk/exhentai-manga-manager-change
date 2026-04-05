@@ -723,69 +723,125 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     // - tagname: search for tag in any category
     // - namespace:tagname: search for tag in specific category (artist, group, series, type, character, female, male, language)
     // - -tagname: exclude tag
-    // - multiple tags with space = AND
+    // - multiple tags with space = AND (intersection)
+    // - "or" keyword between terms = OR (union)
+    // - underscore in tag name = space (gender_bender -> "gender bender")
     if (filters.searchString) {
-      const searchConditions = []
-      const searchStr = filters.searchString.trim()
+      const searchStr = filters.searchString.trim().toLowerCase()
       
       console.log('[Search] searchString:', searchStr)
       
-      // Parse search string using regex to handle namespace:tag format
-      // Pattern: [-]namespace:"tag with spaces" or [-]namespace:tag or -tag or tag
-      // Regex matches: optional minus, optional namespace:, then tag (quoted or not)
-      const tokenRegex = /(-)?([a-zA-Z]+:)?("[^"]*"+|[^\s]+)/g
-      const positiveTags = []
-      const negativeTags = []
-      const searchKeywords = [] // Keywords for LIKE search
+      // Parse search string - split by whitespace
+      const terms = searchStr.split(/\s+/)
+      const positiveTerms = []
+      const negativeTerms = []
+      const orGroups = []  // Array of arrays for OR groups
       
-      let match
-      while ((match = tokenRegex.exec(searchStr)) !== null) {
-        const isNegative = !!match[1]
-        const namespacePart = match[2] // e.g., "female:" or undefined
-        let tagPart = match[3] // e.g., "big breasts" or big
+      for (let i = 0; i < terms.length; i++) {
+        const rawTerm = terms[i]
         
-        if (!tagPart) continue
+        // Skip "or" keyword
+        if (rawTerm === 'or') continue
         
-        const namespace = namespacePart ? namespacePart.slice(0, -1).toLowerCase() : null
-        // Remove quotes from tag
-        const tag = tagPart.toLowerCase().replace(/^"+|"+$/g, '')
+        // Check if this term is part of an OR group
+        const prevIsOr = i > 0 && terms[i - 1] === 'or'
+        const nextIsOr = i + 1 < terms.length && terms[i + 1] === 'or'
+        const isInOrGroup = prevIsOr || nextIsOr
+        
+        // Parse the term
+        let term = rawTerm
+        let isNegative = false
+        let namespace = null
+        
+        // Check for negative
+        if (term.startsWith('-')) {
+          isNegative = true
+          term = term.slice(1)
+        }
+        
+        // Check for namespace (e.g., "female:gender_bender")
+        const colonIndex = term.indexOf(':')
+        if (colonIndex > 0) {
+          namespace = term.slice(0, colonIndex).toLowerCase()
+          term = term.slice(colonIndex + 1)
+        }
+        
+        // Convert underscores to spaces (hitomi.la style)
+        term = term.replace(/_/g, ' ')
+        
+        const parsedTerm = { term, namespace, rawTerm }
         
         if (isNegative) {
-          negativeTags.push({ tag, category: namespace })
+          negativeTerms.push(parsedTerm)
+        } else if (isInOrGroup) {
+          // Part of an OR group - add to the last group or create new one
+          if (!prevIsOr || orGroups.length === 0) {
+            orGroups.push([parsedTerm])
+          } else {
+            orGroups[orGroups.length - 1].push(parsedTerm)
+          }
         } else {
-          positiveTags.push({ tag, category: namespace })
-          // Add tag to search keywords (without namespace prefix)
-          searchKeywords.push(tag)
+          positiveTerms.push(parsedTerm)
         }
       }
       
-      // Build search conditions - search in title/filepath/tags
-      // For tags field, search each keyword separately
-      searchConditions.push(
-        { title: { [Op.like]: `%${searchStr.toLowerCase()}%` } },
-        { title_jpn: { [Op.like]: `%${searchStr.toLowerCase()}%` } },
-        { filepath: { [Op.like]: `%${searchStr.toLowerCase()}%` } }
-      )
+      // Sort positive terms: namespace terms first (more specific = smaller initial result set)
+      positiveTerms.sort((a, b) => {
+        if (a.namespace && !b.namespace) return -1
+        if (!a.namespace && b.namespace) return 1
+        return 0
+      })
       
-      // Add tag search conditions for each keyword
-      for (const keyword of searchKeywords) {
-        searchConditions.push(
-          Manga.sequelize.where(
-            Manga.sequelize.fn('LOWER', Manga.sequelize.col('tags')),
-            { [Op.like]: `%"${keyword}"%` }
-          )
-        )
+      console.log('[Search] positiveTerms:', positiveTerms.map(t => t.term))
+      console.log('[Search] negativeTerms:', negativeTerms.map(t => t.term))
+      console.log('[Search] orGroups:', orGroups.map(g => g.map(t => t.term)))
+      
+      // Store parsed terms for JS-level filtering
+      whereClause._hitomiSearch = {
+        positive: positiveTerms,
+        negative: negativeTerms,
+        orGroups: orGroups
       }
       
-      whereClause[Op.or] = searchConditions
+      // Build SQL conditions for the first term (to get initial results)
+      // For terms without namespace, search in title/filepath/tags
+      // For terms with namespace, only search in tags
+      const buildSqlConditions = (parsedTerm) => {
+        const { term, namespace } = parsedTerm
+        const conditions = []
+        
+        if (namespace) {
+          // Namespace specified - search only in tags JSON
+          conditions.push(
+            Manga.sequelize.where(
+              Manga.sequelize.fn('LOWER', Manga.sequelize.col('tags')),
+              { [Op.like]: `%"${term}"%` }
+            )
+          )
+        } else {
+          // No namespace - search in title/filepath/tags (OR logic for this term)
+          conditions.push(
+            { title: { [Op.like]: `%${term}%` } },
+            { title_jpn: { [Op.like]: `%${term}%` } },
+            { filepath: { [Op.like]: `%${term}%` } },
+            Manga.sequelize.where(
+              Manga.sequelize.fn('LOWER', Manga.sequelize.col('tags')),
+              { [Op.like]: `%"${term}"%` }
+            )
+          )
+        }
+        return conditions
+      }
       
-      console.log('[Search] positiveTags:', positiveTags)
-      console.log('[Search] negativeTags:', negativeTags)
-      console.log('[Search] searchKeywords:', searchKeywords)
-      
-      // Store tags for frontend filtering
-      if (positiveTags.length > 0 || negativeTags.length > 0) {
-        whereClause._tagFilters = { positive: positiveTags, negative: negativeTags }
+      // Use first positive term to get initial results (most selective)
+      if (positiveTerms.length > 0) {
+        whereClause[Op.or] = buildSqlConditions(positiveTerms[0])
+      } else if (orGroups.length > 0 && orGroups[0].length > 0) {
+        // Use first OR group term for initial results
+        whereClause[Op.or] = buildSqlConditions(orGroups[0][0])
+      } else {
+        // No positive terms, just negative - need to get all books first
+        // This will be handled in JS filtering
       }
     }
     
@@ -824,13 +880,13 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     const orderDirection = sortOrder.toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
     
     // Extract tag filters before passing to Sequelize (they can't be serialized to SQL)
-    let tagFilters = whereClause._tagFilters
-    if (tagFilters) {
-      delete whereClause._tagFilters
+    let hitomiSearch = whereClause._hitomiSearch
+    if (hitomiSearch) {
+      delete whereClause._hitomiSearch
     }
     
-    // Get total count
-    const total = await Manga.count({ where: whereClause })
+    // Get total count (may be recalculated after JS filtering)
+    let total = await Manga.count({ where: whereClause })
     console.log('[Search] total count:', total)
     
     // Get paged data with hard limit
@@ -841,12 +897,8 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
       offset: offset,
       raw: true
     })
-    console.log('[Search] books found:', books.length)
-    if (books.length > 0) {
-      console.log('[Search] first book title:', books[0].title)
-    }
     
-    // Parse tags field from JSON string to object for each book
+    // Parse tags JSON
     let parsedBooks = books.map(book => {
       if (typeof book.tags === 'string') {
         try {
@@ -861,62 +913,70 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
       return book
     })
     
-    // Filter by tags - both positive and negative (for precise matching)
-    if (tagFilters) {
-      const { positive, negative } = tagFilters
+    // Hitomi.la style filtering: AND logic for multiple terms, OR for or-groups, exclusion for negative
+    if (hitomiSearch) {
+      const { positive, negative, orGroups } = hitomiSearch
       
-      parsedBooks = parsedBooks.filter(book => {
+      // Helper: check if a book matches a term
+      const bookMatchesTerm = (book, parsedTerm) => {
+        const { term, namespace } = parsedTerm
         const tags = book.tags || {}
         
-        // Check negative tags (exclusions) first
-        if (negative && negative.length > 0) {
-          for (const { tag, category } of negative) {
-            if (category) {
-              // Check specific category
-              const categoryTags = tags[category] || []
-              if (Array.isArray(categoryTags) && categoryTags.some(t => t.toLowerCase().includes(tag))) {
-                return false
-              }
-            } else {
-              // Check any category
-              for (const cat in tags) {
-                const catTags = tags[cat] || []
-                if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase().includes(tag))) {
-                  return false
-                }
-              }
-            }
+        // If namespace specified, only check that category
+        if (namespace) {
+          const categoryTags = tags[namespace] || []
+          return Array.isArray(categoryTags) && categoryTags.some(t => t.toLowerCase() === term || t.toLowerCase().includes(term))
+        }
+        
+        // No namespace - check if term matches in title, filepath, or any tag
+        const titleMatch = book.title && book.title.toLowerCase().includes(term)
+        const titleJpnMatch = book.title_jpn && book.title_jpn.toLowerCase().includes(term)
+        const filepathMatch = book.filepath && book.filepath.toLowerCase().includes(term)
+        
+        if (titleMatch || titleJpnMatch || filepathMatch) return true
+        
+        // Check tags
+        for (const cat in tags) {
+          const catTags = tags[cat] || []
+          if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase() === term || t.toLowerCase().includes(term))) {
+            return true
+          }
+        }
+        return false
+      }
+      
+      parsedBooks = parsedBooks.filter(book => {
+        // Step 1: Check remaining positive terms (AND logic - all must match)
+        // Skip first term as it was used in SQL query
+        for (let i = 1; i < positive.length; i++) {
+          if (!bookMatchesTerm(book, positive[i])) {
+            return false
           }
         }
         
-        // Check positive tags - ALL must match (AND logic)
-        if (positive && positive.length > 0) {
-          for (const { tag, category } of positive) {
-            let found = false
-            if (category) {
-              // Check specific category
-              const categoryTags = tags[category] || []
-              if (Array.isArray(categoryTags) && categoryTags.some(t => t.toLowerCase().includes(tag))) {
-                found = true
-              }
-            } else {
-              // Check any category
-              for (const cat in tags) {
-                const catTags = tags[cat] || []
-                if (Array.isArray(catTags) && catTags.some(t => t.toLowerCase().includes(tag))) {
-                  found = true
-                  break
-                }
-              }
-            }
-            if (!found) return false
+        // Step 2: Check OR groups (within each group, ANY must match)
+        for (const orGroup of orGroups) {
+          // Skip first term of first OR group if it was used in SQL
+          const termsToCheck = orGroup
+          const groupMatch = termsToCheck.some(term => bookMatchesTerm(book, term))
+          if (!groupMatch) {
+            return false
+          }
+        }
+        
+        // Step 3: Check negative terms (exclusion - NONE must match)
+        for (const negTerm of negative) {
+          if (bookMatchesTerm(book, negTerm)) {
+            return false
           }
         }
         
         return true
       })
       
-      delete whereClause._tagFilters
+      // Recalculate total after JS filtering to ensure consistency
+      total = parsedBooks.length
+      console.log('[Search] After JS filtering, total:', total)
     }
     
     return {
