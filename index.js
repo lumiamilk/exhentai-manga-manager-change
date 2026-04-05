@@ -727,7 +727,14 @@ ipcMain.handle('load-book-list-paged', async (event, { page = 1, pageSize = 200,
     // - "or" keyword between terms = OR (union)
     // - underscore in tag name = space (gender_bender -> "gender bender")
     if (filters.searchString) {
-      const searchStr = filters.searchString.trim().toLowerCase()
+      let searchStr = filters.searchString.trim().toLowerCase()
+      
+      // Clean up old search format: 
+      // - Remove brackets []
+      // - Replace spaces inside quotes with underscores, then remove quotes
+      // Example: [male:"gender morph"] -> male:gender_morph
+      searchStr = searchStr.replace(/[\[\]]/g, '')
+      searchStr = searchStr.replace(/"([^"]+)"/g, (_, content) => content.replace(/\s+/g, '_'))
       
       console.log('[Search] searchString:', searchStr)
       
